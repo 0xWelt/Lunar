@@ -40218,7 +40218,7 @@ class AIReviewer {
                 await this.octokit.pulls.createReview({
                     owner: this.repo.owner,
                     repo: this.repo.repo,
-                    pull_number: this.pull_request.pull_number,
+                    pull_number: this.pull_request.number,
                     commit_id: commits[commits.length - 1].sha,
                     event: 'COMMENT',
                     comments: reviews
