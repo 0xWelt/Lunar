@@ -6,7 +6,8 @@ Lunar is short for 'LUnar is Not an Ai Reviewer'.
 
 ## Featuers
 
-- Review Pull Requests with AI and directly comment on each file. ([example pr](https://github.com/0xWelt/test-action/pull/2))
+- Review Pull Requests with AI and directly comment on each file.
+  ([example pr](https://github.com/0xWelt/test-action/pull/2))
 
   ![review](./docs/review.png)
 
