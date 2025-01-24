@@ -40166,8 +40166,6 @@ class AIReviewer {
             throw new Error();
         }
         this.pull_request = githubExports.context.payload.pull_request;
-        console.log('Repo:', this.repo);
-        console.log('Pull request:', this.pull_request);
     }
     async main() {
         // setup chat

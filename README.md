@@ -1,18 +1,22 @@
 # Lunar
+
 > Yet another AI powered code reviewer
 
 Lunar is short for 'LUnar is Not an Ai Reviewer'.
 
 ## Featuers
-- Review Pull Requests with AI and directly comment on each file. ([example pr](https://github.com/0xWelt/test-action/pull/2))
-  ![review](./docs/review.png)
+
+- Review Pull Requests with AI and directly comment on each file.
+  ([example pr](https://github.com/0xWelt/test-action/pull/2))
+- ![review](./docs/review.png)
 
 ## Use Lunar as Github Actions
-1. Add the `OPENAI_API_KEY` to your github actions secrets.
-   ![actions_secrets](./docs/actions_secrets.png)
-   
-2. create `.github/workflows/lunar.yml`
-   ```yaml
+
+1.  Add the `OPENAI_API_KEY` to your github actions secrets.
+2.  ![actions_secrets](./docs/actions_secrets.png)
+3.  create `.github/workflows/lunar.yml`
+
+    ```yaml
     name: Lunar Code Review
 
     permissions:
@@ -51,9 +55,10 @@ Lunar is short for 'LUnar is Not an Ai Reviewer'.
                 如果发现任何问题或改进建议，请分点详细列出并说明；如果没有问题，请直接输出“LGTM”四个字母表示通过，不用再输出任何其他解释。
               temperature: 1.0
               max_tokens: 8192
-   ```
-  
+    ```
+
 ## Develop Plan
+
 - [x] Review Pull Requests with AI and directly comment on each file.
-- [ ] Add **icons** and **model names** for popular LLMs. 
+- [ ] Add **icons** and **model names** for popular LLMs.
 - [ ] Multi-turn conversation support. Context aware code suggestions.
