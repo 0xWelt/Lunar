@@ -2,13 +2,21 @@ import { OpenAI } from 'openai'
 import * as core from '@actions/core'
 import * as github from '@actions/github'
 
+const failWithOutput = (message: string) => {
+  console.error(message)
+  core.setFailed(message)
+}
 export class Chat {
   private openai: OpenAI
   private review_prompt: string
 
-  constructor(apikey: string) {
+  constructor() {
+    if (!process.env.OPENAI_API_KEY) {
+      failWithOutput('OPENAI_API_KEY is not set')
+      throw new Error()
+    }
     this.openai = new OpenAI({
-      apiKey: apikey,
+      apiKey: process.env.OPENAI_API_KEY,
       baseURL: process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1'
     })
 
@@ -26,15 +34,15 @@ export class Chat {
         }
       ],
       model: process.env.MODEL || 'gpt-4o-mini',
-      temperature: +(process.env.temperature || 0) || 1,
-      max_tokens: process.env.max_tokens ? +process.env.max_tokens : undefined
+      temperature: process.env.temperature ? +process.env.temperature : 1.0,
+      max_tokens: process.env.max_tokens ? +process.env.max_tokens : 4096
     })
 
     if (res.choices) {
       return res.choices[0].message.content
     }
 
-    core.setFailed('No response from OpenAI')
+    failWithOutput('No response from OpenAI')
     return ''
   }
 }
@@ -46,41 +54,21 @@ export class AIReviewer {
 
   constructor() {
     if (!process.env.GITHUB_TOKEN) {
-      throw new Error('GITHUB_TOKEN is not set.')
+      failWithOutput('GITHUB_TOKEN is not set.')
+      throw new Error()
     }
     this.octokit = github.getOctokit(process.env.GITHUB_TOKEN).rest
     this.repo = github.context.repo
     if (!github.context.payload.pull_request) {
-      throw new Error('This action only works on pull requests.')
+      failWithOutput('This action only works on pull requests.')
+      throw new Error()
     }
     this.pull_request = github.context.payload.pull_request
   }
 
-  private failWithComment = async (message: string) => {
-    core.setFailed(message)
-    await this.octokit.issues.createComment({
-      repo: this.repo.repo,
-      owner: this.repo.owner,
-      issue_number: this.pull_request.number,
-      body: message
-    })
-  }
-
-  private setupChat = async () => {
-    if (process.env.OPENAI_API_KEY) {
-      return new Chat(process.env.OPENAI_API_KEY)
-    }
-    await this.failWithComment('OPENAI_API_KEY is not set.')
-    return null
-  }
-
   async main() {
     // setup chat
-    const chat = await this.setupChat()
-    if (!chat) {
-      console.error('Failed to setup chat.')
-      return
-    }
+    const chat = new Chat()
 
     // get the diff of the pull request
     const data = await this.octokit.repos.compareCommits({
@@ -91,6 +79,7 @@ export class AIReviewer {
     })
     const { files: changed_files, commits } = data.data
 
+    // review diff
     if (changed_files) {
       console.log(`Start reviewing ${changed_files.length} files`)
 
@@ -124,15 +113,20 @@ export class AIReviewer {
       }
 
       // create comments
-      await this.octokit.pulls.createReview({
-        repo: this.repo.repo,
-        owner: this.repo.owner,
-        pull_number: this.pull_request.pull_number,
-        body: 'Code review by ChatGPT',
-        event: 'COMMENT',
-        commit_id: commits[commits.length - 1].sha,
-        comments: reviews
-      })
+      if (reviews.length > 0) {
+        console.log(`Posting ${reviews.length} reviews`)
+        await this.octokit.pulls.createReview({
+          repo: this.repo.repo,
+          owner: this.repo.owner,
+          pull_number: this.pull_request.pull_number,
+          body: 'Code review by ChatGPT',
+          event: 'COMMENT',
+          commit_id: commits[commits.length - 1].sha,
+          comments: reviews
+        })
+      } else {
+        console.log('No reviews to post')
+      }
     } else {
       console.log('No files changed')
     }

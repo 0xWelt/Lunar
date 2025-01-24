@@ -1,7 +1,7 @@
 export declare class Chat {
     private openai;
     private review_prompt;
-    constructor(apikey: string);
+    constructor();
     reviewPatch: (patch: string) => Promise<string | null>;
 }
 export declare class AIReviewer {
@@ -9,8 +9,6 @@ export declare class AIReviewer {
     private repo;
     private pull_request;
     constructor();
-    private failWithComment;
-    private setupChat;
     main(): Promise<void>;
 }
 export declare function run(): Promise<void>;
