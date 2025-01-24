@@ -108,6 +108,7 @@ export class AIReviewer {
         }
 
         try {
+          console.log(`Reviewing ${filename}`)
           var res = await chat.reviewPatch(patch)
         } catch (error) {
           console.error(`Failed to review ${filename}:`, error)
