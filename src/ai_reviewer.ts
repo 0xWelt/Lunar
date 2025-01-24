@@ -109,17 +109,17 @@ export class AIReviewer {
 
         try {
           console.log(`Reviewing ${filename}`)
-          var res = await chat.reviewPatch(patch)
+          const res = await chat.reviewPatch(patch)
+          if (res) {
+            reviews.push({
+              path: filename,
+              body: res,
+              position: patch.split('\n').length - 1
+            })
+          }
         } catch (error) {
           console.error(`Failed to review ${filename}:`, error)
           continue
-        }
-        if (res) {
-          reviews.push({
-            path: filename,
-            body: res,
-            position: patch.split('\n').length - 1
-          })
         }
       }
 

@@ -36660,13 +36660,22 @@ class AIReviewer {
             const reviews = [];
             for (const file of changed_files) {
                 if (file.status !== 'modified' && file.status !== 'added') {
+                    console.log(`Skipping ${file.filename} with status ${file.status}`);
                     continue;
                 }
                 const { filename, patch } = file;
                 if (!patch) {
+                    console.log(`Skipping ${filename} with no changes`);
                     continue;
                 }
-                const res = await chat.reviewPatch(patch);
+                try {
+                    console.log(`Reviewing ${filename}`);
+                    var res = await chat.reviewPatch(patch);
+                }
+                catch (error) {
+                    console.error(`Failed to review ${filename}:`, error);
+                    continue;
+                }
                 if (res) {
                     reviews.push({
                         path: filename,
