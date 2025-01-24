@@ -65,8 +65,6 @@ export class AIReviewer {
       throw new Error()
     }
     this.pull_request = github.context.payload.pull_request
-    console.log('Repo:', this.repo)
-    console.log('Pull request:', this.pull_request)
   }
 
   async main() {
