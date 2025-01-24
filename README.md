@@ -11,6 +11,10 @@ Lunar is short for 'LUnar is Not an Ai Reviewer'.
 
   ![review](./docs/review.png)
 
+- Beyond default GPT-4o-mini, Lunar can also use other LLMs like Deepseek, Kimi,
+  etc. You only need to specify the `OPENAI_API_KEY` in actions' secrets and
+  `OPENAI_BASE_URL` in the environment variables.
+
 ## Use Lunar as Github Actions
 
 1.  Add the `OPENAI_API_KEY` to your github actions secrets.
