@@ -38,6 +38,7 @@
   "license": "MIT",
   "dependencies": {
     "@actions/core": "^1.11.1",
+    "@octokit/rest": "^21.1.0",
     "openai": "^4.80.0",
     "probot": "^13.4.1"
   },

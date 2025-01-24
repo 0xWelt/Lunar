@@ -1,6 +1,7 @@
 import { OpenAI } from 'openai'
 import * as core from '@actions/core'
 import * as github from '@actions/github'
+import { Octokit } from '@octokit/rest'
 
 const failWithOutput = (message: string) => {
   console.error(message)
@@ -57,7 +58,7 @@ export class AIReviewer {
       failWithOutput('GITHUB_TOKEN is not set.')
       throw new Error()
     }
-    this.octokit = github.getOctokit(process.env.GITHUB_TOKEN).rest
+    this.octokit = new Octokit({ auth: process.env.GITHUB_TOKEN })
     this.repo = github.context.repo
     if (!github.context.payload.pull_request) {
       failWithOutput('This action only works on pull requests.')
@@ -99,11 +100,12 @@ export class AIReviewer {
         try {
           console.log(`Reviewing ${filename}`)
           const res = await chat.reviewPatch(patch)
+          console.log(`Review for ${filename}:`, res)
           if (res) {
             reviews.push({
               path: filename,
-              body: res,
-              position: patch.split('\n').length - 1
+              position: patch.split('\n').length - 1,
+              body: res
             })
           }
         } catch (error) {
@@ -116,12 +118,11 @@ export class AIReviewer {
       if (reviews.length > 0) {
         console.log(`Posting ${reviews.length} reviews`)
         await this.octokit.pulls.createReview({
-          repo: this.repo.repo,
           owner: this.repo.owner,
+          repo: this.repo.repo,
           pull_number: this.pull_request.pull_number,
-          body: 'Code review by ChatGPT',
-          event: 'COMMENT',
           commit_id: commits[commits.length - 1].sha,
+          event: 'COMMENT',
           comments: reviews
         })
       } else {
