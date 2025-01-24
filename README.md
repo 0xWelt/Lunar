@@ -37,7 +37,7 @@ Lunar is short for 'LUnar is Not an Ai Reviewer'.
           - uses: 0xWelt/Lunar@main
             env:
               GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-              OPENAI_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+              OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
               # Optional, change as you wish or comment out to use default
               OPENAI_BASE_URL: https://api.deepseek.com/v1
               MODEL: deepseek-chat
