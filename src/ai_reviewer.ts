@@ -2,28 +2,34 @@ import { OpenAI } from 'openai'
 import * as core from '@actions/core'
 import * as github from '@actions/github'
 import { Octokit } from '@octokit/rest'
+import { createReviewPrompt } from './prompts.js'
 
 const failWithOutput = (message: string) => {
   console.error(message)
   core.setFailed(message)
+  throw new Error(message)
 }
 export class Chat {
+  private language: string
   private openai: OpenAI
-  private review_prompt: string
+  private model: string
 
-  constructor() {
+  constructor(model: string) {
+    this.language = process.env.LANGUAGE || 'Chinese'
+    const supported_languages = ['Chinese', 'English']
+    if (!supported_languages.includes(this.language)) {
+      failWithOutput(`Language must be one of ${supported_languages}`)
+    }
+
     if (!process.env.OPENAI_API_KEY) {
       failWithOutput('OPENAI_API_KEY is not set')
-      throw new Error()
     }
     this.openai = new OpenAI({
       apiKey: process.env.OPENAI_API_KEY,
       baseURL: process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1'
     })
 
-    this.review_prompt =
-      process.env.REVIEW_PROMPT ||
-      'Below is a code patch, please help me do a brief code review on it. Any bug risks and/or improvement suggestions are welcome:'
+    this.model = model
   }
 
   public reviewPatch = async (patch: string) => {
@@ -31,45 +37,46 @@ export class Chat {
       messages: [
         {
           role: 'user',
-          content: `${this.review_prompt}\n${patch}`
+          content: createReviewPrompt(this.language, patch)
         }
       ],
-      model: process.env.MODEL || 'gpt-4o-mini',
-      temperature: process.env.temperature ? +process.env.temperature : 1.0,
-      max_tokens: process.env.max_tokens ? +process.env.max_tokens : 4096
+      model: this.model,
+      temperature: process.env.TEMPERATURE ? +process.env.TEMPERATURE : 1.0,
+      max_tokens: process.env.MAX_TOKENS ? +process.env.MAX_TOKENS : 4096
     })
 
     if (res.choices) {
       return res.choices[0].message.content
     }
-
     failWithOutput('No response from OpenAI')
-    return ''
   }
 }
 
 export class AIReviewer {
+  private model: string
+
   private octokit
   private repo
   private pull_request
 
   constructor() {
+    this.model = process.env.MODEL || 'gpt-4o-mini'
+
     if (!process.env.GITHUB_TOKEN) {
       failWithOutput('GITHUB_TOKEN is not set.')
-      throw new Error()
     }
     this.octokit = new Octokit({ auth: process.env.GITHUB_TOKEN })
     this.repo = github.context.repo
     if (!github.context.payload.pull_request) {
       failWithOutput('This action only works on pull requests.')
-      throw new Error()
+      throw new Error('This action only works on pull requests.')
     }
     this.pull_request = github.context.payload.pull_request
   }
 
   async main() {
     // setup chat
-    const chat = new Chat()
+    const chat = new Chat(this.model)
 
     // get the diff of the pull request
     const data = await this.octokit.repos.compareCommits({
@@ -101,7 +108,8 @@ export class AIReviewer {
           console.log(`Reviewing ${filename}`)
           const res = await chat.reviewPatch(patch)
           console.log(`Review for ${filename}:`, res)
-          if (res) {
+          if (res && !res.includes('LGTM')) {
+            // skip LGTM reviews
             reviews.push({
               path: filename,
               position: patch.split('\n').length - 1,
@@ -122,11 +130,20 @@ export class AIReviewer {
           repo: this.repo.repo,
           pull_number: this.pull_request.number,
           commit_id: commits[commits.length - 1].sha,
+          body: `Review from ${this.model}: ${reviews.length} issues found.`,
           event: 'COMMENT',
           comments: reviews
         })
       } else {
         console.log('No reviews to post')
+        await this.octokit.pulls.createReview({
+          owner: this.repo.owner,
+          repo: this.repo.repo,
+          pull_number: this.pull_request.number,
+          commit_id: commits[commits.length - 1].sha,
+          body: `Review from ${this.model}: LGTM!`,
+          event: 'COMMENT'
+        })
       }
     } else {
       console.log('No files changed')

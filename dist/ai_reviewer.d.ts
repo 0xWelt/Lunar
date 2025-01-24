@@ -1,10 +1,12 @@
 export declare class Chat {
+    private language;
     private openai;
-    private review_prompt;
-    constructor();
-    reviewPatch: (patch: string) => Promise<string | null>;
+    private model;
+    constructor(model: string);
+    reviewPatch: (patch: string) => Promise<string | null | undefined>;
 }
 export declare class AIReviewer {
+    private model;
     private octokit;
     private repo;
     private pull_request;

@@ -40111,65 +40111,125 @@ const Octokit = Octokit$1.plugin(requestLog, legacyRestEndpointMethods, paginate
   }
 );
 
+const createReviewPrompt = (language, patch) => {
+    switch (language) {
+        case 'Chinese':
+            return `
+我将提供给你一段github pull request的代码变更片段。请你扮演一位专业的开源社区开发者，帮我进行代码审核。
+[[代码审核原则]]
+[代码质量]
+1. 该修改是否有必要，是否相比旧代码有改进或添加了新功能？
+2. 是否有逻辑错误或潜在的运行时错误？
+3. 是否有与其他代码部分的兼容性问题，会不会破坏与修改无关的现有逻辑？
+4. 是否有可以优化的代码结构或逻辑，是否有更简洁或更高效的方式来实现相同功能？
+5. 是否有潜在的性能问题？
+[安全性]
+6. 是否有敏感信息泄露的风险（如硬编码的密钥、密码等）？
+7. 是否有可能运行来路不明的外部代码？
+
+[[需要审核的代码边跟片段]]
+${patch}
+
+[[结果返回格式]]
+1. 用中文返回结果
+2. 如果没有问题，请直接输出“LGTM”四个字母表示通过，不用再输出任何其他解释。
+3. 如果发现任何问题或改进建议，请分点详细列出并说明。切记不要输出“LGTM”。
+
+[[你的审核结果]]
+`;
+        case 'English':
+            return `
+I will provide you with a code change snippet from a GitHub pull request. Please act as a professional open-source community developer and help me review the code.
+
+[[Code Review Principles]]
+[Code Quality]
+1. Is the modification necessary? Does it improve or add new functionality compared to the old code?
+2. Are there any logical errors or potential runtime errors?
+3. Are there any compatibility issues with other parts of the code? Will it break existing logic that is unrelated to the modification?
+4. Can the code structure or logic be optimized? Is there a simpler or more efficient way to achieve the same functionality?
+5. Are there any potential performance issues?
+
+[Security]
+6. Is there a risk of sensitive information leakage (such as hardcoded keys, passwords, etc.)?
+7. Is there a possibility of running untrusted external code?
+
+[[Code Snippet to Be Reviewed]]
+${patch}
+
+[[Result Format]]
+1. Answer in English.
+2. If there are no issues, please simply output the letters "LGTM" to indicate approval, without providing any further explanation.
+3. If any issues or suggestions for improvement are found, please list them in detail point by point and explain. Please do not use the letters "LGTM" in this case.
+
+[[Your Review Result]]
+`;
+    }
+    return '';
+};
+
 const failWithOutput = (message) => {
     console.error(message);
     coreExports.setFailed(message);
+    throw new Error(message);
 };
 class Chat {
+    language;
     openai;
-    review_prompt;
-    constructor() {
+    model;
+    constructor(model) {
+        this.language = process.env.LANGUAGE || 'Chinese';
+        const supported_languages = ['Chinese', 'English'];
+        if (!supported_languages.includes(this.language)) {
+            failWithOutput(`Language must be one of ${supported_languages}`);
+        }
         if (!process.env.OPENAI_API_KEY) {
             failWithOutput('OPENAI_API_KEY is not set');
-            throw new Error();
         }
         this.openai = new OpenAI({
             apiKey: process.env.OPENAI_API_KEY,
             baseURL: process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1'
         });
-        this.review_prompt =
-            process.env.REVIEW_PROMPT ||
-                'Below is a code patch, please help me do a brief code review on it. Any bug risks and/or improvement suggestions are welcome:';
+        this.model = model;
     }
     reviewPatch = async (patch) => {
         const res = await this.openai.chat.completions.create({
             messages: [
                 {
                     role: 'user',
-                    content: `${this.review_prompt}\n${patch}`
+                    content: createReviewPrompt(this.language, patch)
                 }
             ],
-            model: process.env.MODEL || 'gpt-4o-mini',
-            temperature: process.env.temperature ? +process.env.temperature : 1.0,
-            max_tokens: process.env.max_tokens ? +process.env.max_tokens : 4096
+            model: this.model,
+            temperature: process.env.TEMPERATURE ? +process.env.TEMPERATURE : 1.0,
+            max_tokens: process.env.MAX_TOKENS ? +process.env.MAX_TOKENS : 4096
         });
         if (res.choices) {
             return res.choices[0].message.content;
         }
         failWithOutput('No response from OpenAI');
-        return '';
     };
 }
 class AIReviewer {
+    model;
     octokit;
     repo;
     pull_request;
     constructor() {
+        this.model = process.env.MODEL || 'gpt-4o-mini';
         if (!process.env.GITHUB_TOKEN) {
             failWithOutput('GITHUB_TOKEN is not set.');
-            throw new Error();
         }
         this.octokit = new Octokit({ auth: process.env.GITHUB_TOKEN });
         this.repo = githubExports.context.repo;
         if (!githubExports.context.payload.pull_request) {
             failWithOutput('This action only works on pull requests.');
-            throw new Error();
+            throw new Error('This action only works on pull requests.');
         }
         this.pull_request = githubExports.context.payload.pull_request;
     }
     async main() {
         // setup chat
-        const chat = new Chat();
+        const chat = new Chat(this.model);
         // get the diff of the pull request
         const data = await this.octokit.repos.compareCommits({
             owner: this.repo.owner,
@@ -40197,7 +40257,8 @@ class AIReviewer {
                     console.log(`Reviewing ${filename}`);
                     const res = await chat.reviewPatch(patch);
                     console.log(`Review for ${filename}:`, res);
-                    if (res) {
+                    if (res && !res.includes('LGTM')) {
+                        // skip LGTM reviews
                         reviews.push({
                             path: filename,
                             position: patch.split('\n').length - 1,
@@ -40218,12 +40279,21 @@ class AIReviewer {
                     repo: this.repo.repo,
                     pull_number: this.pull_request.number,
                     commit_id: commits[commits.length - 1].sha,
+                    body: `Review from ${this.model}: ${reviews.length} issues found.`,
                     event: 'COMMENT',
                     comments: reviews
                 });
             }
             else {
                 console.log('No reviews to post');
+                await this.octokit.pulls.createReview({
+                    owner: this.repo.owner,
+                    repo: this.repo.repo,
+                    pull_number: this.pull_request.number,
+                    commit_id: commits[commits.length - 1].sha,
+                    body: `Review from ${this.model}: LGTM!`,
+                    event: 'COMMENT'
+                });
             }
         }
         else {
