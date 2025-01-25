@@ -67,7 +67,7 @@ uses AI to review your code, designed to be simple and extensible.
 ## Contributors
 
 <a href="https://github.com/0xWelt/Lunar/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=0xWelt/Lunar" />
+  <img src="https://contrib.rocks/image?repo=0xWelt/Lunar", title="Contributors" />
 </a>
 
 ## Acknowledgements
