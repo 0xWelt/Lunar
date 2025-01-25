@@ -12,7 +12,7 @@ import require$$0$2 from 'util';
 import require$$0$4 from 'stream';
 import require$$7 from 'buffer';
 import require$$8 from 'querystring';
-import require$$13 from 'stream/web';
+import require$$14 from 'stream/web';
 import require$$0$7 from 'node:stream';
 import require$$1$2 from 'node:util';
 import require$$0$6 from 'node:events';
@@ -1497,7 +1497,7 @@ function requireUtil$6 () {
 	let ReadableStream;
 	function ReadableStreamFrom (iterable) {
 	  if (!ReadableStream) {
-	    ReadableStream = require$$13.ReadableStream;
+	    ReadableStream = require$$14.ReadableStream;
 	  }
 
 	  if (ReadableStream.from) {
@@ -4554,7 +4554,7 @@ function requireUtil$5 () {
 
 	function isReadableStreamLike (stream) {
 	  if (!ReadableStream) {
-	    ReadableStream = require$$13.ReadableStream;
+	    ReadableStream = require$$14.ReadableStream;
 	  }
 
 	  return stream instanceof ReadableStream || (
@@ -6694,6 +6694,14 @@ function requireBody () {
 	const { File: UndiciFile } = requireFile();
 	const { parseMIMEType, serializeAMimeType } = requireDataURL();
 
+	let random;
+	try {
+	  const crypto = require('node:crypto');
+	  random = (max) => crypto.randomInt(0, max);
+	} catch {
+	  random = (max) => Math.floor(Math.random(max));
+	}
+
 	let ReadableStream = globalThis.ReadableStream;
 
 	/** @type {globalThis['File']} */
@@ -6704,7 +6712,7 @@ function requireBody () {
 	// https://fetch.spec.whatwg.org/#concept-bodyinit-extract
 	function extractBody (object, keepalive = false) {
 	  if (!ReadableStream) {
-	    ReadableStream = require$$13.ReadableStream;
+	    ReadableStream = require$$14.ReadableStream;
 	  }
 
 	  // 1. Let stream be null.
@@ -6779,7 +6787,7 @@ function requireBody () {
 	    // Set source to a copy of the bytes held by object.
 	    source = new Uint8Array(object.buffer.slice(object.byteOffset, object.byteOffset + object.byteLength));
 	  } else if (util.isFormDataLike(object)) {
-	    const boundary = `----formdata-undici-0${`${Math.floor(Math.random() * 1e11)}`.padStart(11, '0')}`;
+	    const boundary = `----formdata-undici-0${`${random(1e11)}`.padStart(11, '0')}`;
 	    const prefix = `--${boundary}\r\nContent-Disposition: form-data`;
 
 	    /*! formdata-polyfill. MIT License. Jimmy Wärting <https://jimmy.warting.se/opensource> */
@@ -6925,7 +6933,7 @@ function requireBody () {
 	function safelyExtractBody (object, keepalive = false) {
 	  if (!ReadableStream) {
 	    // istanbul ignore next
-	    ReadableStream = require$$13.ReadableStream;
+	    ReadableStream = require$$14.ReadableStream;
 	  }
 
 	  // To safely extract a body and a `Content-Type` value from
@@ -15581,7 +15589,7 @@ function requireResponse () {
 	const assert = require$$0$3;
 	const { types } = require$$0$2;
 
-	const ReadableStream = globalThis.ReadableStream || require$$13.ReadableStream;
+	const ReadableStream = globalThis.ReadableStream || require$$14.ReadableStream;
 	const textEncoder = new TextEncoder('utf-8');
 
 	// https://fetch.spec.whatwg.org/#response-class
@@ -16650,7 +16658,7 @@ function requireRequest () {
 
 	      // 2. Set finalBody to the result of creating a proxy for inputBody.
 	      if (!TransformStream) {
-	        TransformStream = require$$13.TransformStream;
+	        TransformStream = require$$14.TransformStream;
 	      }
 
 	      // https://streams.spec.whatwg.org/#readablestream-create-a-proxy
@@ -17143,7 +17151,7 @@ function requireFetch () {
 	const { Readable, pipeline } = require$$0$4;
 	const { addAbortListener, isErrored, isReadable, nodeMajor, nodeMinor } = requireUtil$6();
 	const { dataURLProcessor, serializeAMimeType } = requireDataURL();
-	const { TransformStream } = require$$13;
+	const { TransformStream } = require$$14;
 	const { getGlobalDispatcher } = requireGlobal();
 	const { webidl } = requireWebidl();
 	const { STATUS_CODES } = require$$2$1;
@@ -18813,7 +18821,7 @@ function requireFetch () {
 	  // cancelAlgorithm set to cancelAlgorithm, highWaterMark set to
 	  // highWaterMark, and sizeAlgorithm set to sizeAlgorithm.
 	  if (!ReadableStream) {
-	    ReadableStream = require$$13.ReadableStream;
+	    ReadableStream = require$$14.ReadableStream;
 	  }
 
 	  const stream = new ReadableStream(
@@ -32060,7 +32068,7 @@ async function getResponseData(response) {
     return response.text().catch(() => "");
   }
   const mimetype = fastContentTypeParseExports.safeParse(contentType);
-  if (mimetype.type === "application/json") {
+  if (isJSONResponse(mimetype)) {
     let text = "";
     try {
       text = await response.text();
@@ -32073,6 +32081,9 @@ async function getResponseData(response) {
   } else {
     return response.arrayBuffer().catch(() => new ArrayBuffer(0));
   }
+}
+function isJSONResponse(mimetype) {
+  return mimetype.type === "application/json" || mimetype.type === "application/scim+json";
 }
 function toErrorMessage(data) {
   if (typeof data === "string") {
@@ -35130,7 +35141,7 @@ function stringify(object, opts = {}) {
     return joined.length > 0 ? prefix + joined : '';
 }
 
-const VERSION = '4.80.0'; // x-release-please-version
+const VERSION = '4.80.1'; // x-release-please-version
 
 let auto = false;
 let kind = undefined;
@@ -41008,6 +41019,9 @@ class AST {
             _glob: glob,
         });
     }
+    get options() {
+        return this.#options;
+    }
     // returns the string match, the regexp source, whether there's magic
     // in the regexp (so a regular expression is required) and whether or
     // not the uflag is needed for the regular expression (for posix classes)
@@ -41603,6 +41617,7 @@ class Minimatch {
             globParts = this.levelOneOptimize(globParts);
         }
         else {
+            // just collapse multiple ** portions into one
             globParts = this.adjascentGlobstarOptimize(globParts);
         }
         return globParts;
@@ -41789,10 +41804,11 @@ class Minimatch {
         for (let i = 0; i < globParts.length - 1; i++) {
             for (let j = i + 1; j < globParts.length; j++) {
                 const matched = this.partsMatch(globParts[i], globParts[j], !this.preserveMultipleSlashes);
-                if (!matched)
-                    continue;
-                globParts[i] = matched;
-                globParts[j] = [];
+                if (matched) {
+                    globParts[i] = [];
+                    globParts[j] = matched;
+                    break;
+                }
             }
         }
         return globParts.filter(gs => gs.length);
@@ -42092,7 +42108,11 @@ class Minimatch {
             fastTest = dotStarTest;
         }
         const re = AST.fromGlob(pattern, this.options).toMMPattern();
-        return fastTest ? Object.assign(re, { test: fastTest }) : re;
+        if (fastTest && typeof re === 'object') {
+            // Avoids overriding in frozen environments
+            Reflect.defineProperty(re, 'test', { value: fastTest });
+        }
+        return re;
     }
     makeRe() {
         if (this.regexp || this.regexp === false)
@@ -42331,67 +42351,56 @@ class AIReviewer {
             changed_files = files;
         }
         // filter files
+        const num_changed_files = changed_files?.length || 0;
         changed_files = changed_files?.filter(filterFile);
-        if (changed_files) {
-            console.log(`Start reviewing ${changed_files.length} files`);
-            // create AI reviews
-            const reviews = [];
-            for (const file of changed_files) {
-                if (file.status !== 'modified' && file.status !== 'added') {
-                    console.log(`Skipping ${file.filename} with status ${file.status}`);
-                    continue;
-                }
-                const { filename, patch } = file;
-                if (!patch) {
-                    console.log(`Skipping ${filename} with no changes`);
-                    continue;
-                }
-                try {
-                    console.log(`Reviewing ${filename}`);
-                    const res = await this.chat.reviewPatch(patch);
-                    console.log(`Review for ${filename}:`, res);
-                    if (res && !res.includes('LGTM')) {
-                        // skip LGTM reviews
-                        reviews.push({
-                            path: filename,
-                            position: patch.split('\n').length - 1,
-                            body: res
-                        });
-                    }
-                }
-                catch (error) {
-                    console.error(`Failed to review ${filename}:`, error);
-                    continue;
+        const num_filtered_files = changed_files?.length || 0;
+        // create AI reviews
+        const issues = [];
+        let num_reviews = 0;
+        for (const file of changed_files || []) {
+            if (file.status !== 'modified' && file.status !== 'added') {
+                console.log(`Skipping ${file.filename} with status ${file.status}`);
+                continue;
+            }
+            const { filename, patch } = file;
+            if (!patch) {
+                console.log(`Skipping ${filename} with no changes`);
+                continue;
+            }
+            try {
+                console.log(`Reviewing ${filename}`);
+                num_reviews += 1;
+                const res = await this.chat.reviewPatch(patch);
+                console.log(`Review for ${filename}:`, res);
+                if (res && !res.includes('LGTM')) {
+                    // skip LGTM
+                    issues.push({
+                        path: filename,
+                        position: patch.split('\n').length - 1,
+                        body: res
+                    });
                 }
             }
-            // create comments
-            if (reviews.length > 0) {
-                console.log(`Posting ${reviews.length} reviews`);
-                await this.octokit.pulls.createReview({
-                    owner: this.repo.owner,
-                    repo: this.repo.repo,
-                    pull_number: this.pull_request.number,
-                    commit_id: commits[commits.length - 1].sha,
-                    body: `Review from ${this.chat.model}: ${reviews.length} issues found.`,
-                    event: 'COMMENT',
-                    comments: reviews
-                });
-            }
-            else {
-                console.log('No reviews to post');
-                await this.octokit.pulls.createReview({
-                    owner: this.repo.owner,
-                    repo: this.repo.repo,
-                    pull_number: this.pull_request.number,
-                    commit_id: commits[commits.length - 1].sha,
-                    body: `Review from ${this.chat.model}: LGTM!`,
-                    event: 'COMMENT'
-                });
+            catch (error) {
+                console.error(`Failed to review ${filename}:`, error);
+                continue;
             }
         }
-        else {
-            console.log('No files changed');
-        }
+        // create comments
+        const review_summary = `Review from [${this.chat.model}]:
+    - Total changes: ${num_changed_files}
+    - Filtered: ${num_filtered_files}
+    - Reviewed: ${num_reviews}
+    - Found issues: ${issues.length}`;
+        await this.octokit.pulls.createReview({
+            owner: this.repo.owner,
+            repo: this.repo.repo,
+            pull_number: this.pull_request.number,
+            commit_id: commits[commits.length - 1].sha,
+            body: review_summary,
+            event: 'COMMENT',
+            comments: issues
+        });
     }
 }
 async function run() {

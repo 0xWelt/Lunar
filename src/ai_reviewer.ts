@@ -52,68 +52,59 @@ export class AIReviewer {
     }
 
     // filter files
+    const num_changed_files = changed_files?.length || 0
     changed_files = changed_files?.filter(filterFile)
+    const num_filtered_files = changed_files?.length || 0
 
-    if (changed_files) {
-      console.log(`Start reviewing ${changed_files.length} files`)
-
-      // create AI reviews
-      const reviews = []
-      for (const file of changed_files) {
-        if (file.status !== 'modified' && file.status !== 'added') {
-          console.log(`Skipping ${file.filename} with status ${file.status}`)
-          continue
-        }
-        const { filename, patch } = file
-        if (!patch) {
-          console.log(`Skipping ${filename} with no changes`)
-          continue
-        }
-
-        try {
-          console.log(`Reviewing ${filename}`)
-          const res = await this.chat.reviewPatch(patch)
-          console.log(`Review for ${filename}:`, res)
-          if (res && !res.includes('LGTM')) {
-            // skip LGTM reviews
-            reviews.push({
-              path: filename,
-              position: patch.split('\n').length - 1,
-              body: res
-            })
-          }
-        } catch (error) {
-          console.error(`Failed to review ${filename}:`, error)
-          continue
-        }
+    // create AI reviews
+    const issues = []
+    let num_reviews = 0
+    for (const file of changed_files || []) {
+      if (file.status !== 'modified' && file.status !== 'added') {
+        console.log(`Skipping ${file.filename} with status ${file.status}`)
+        continue
+      }
+      const { filename, patch } = file
+      if (!patch) {
+        console.log(`Skipping ${filename} with no changes`)
+        continue
       }
 
-      // create comments
-      if (reviews.length > 0) {
-        console.log(`Posting ${reviews.length} reviews`)
-        await this.octokit.pulls.createReview({
-          owner: this.repo.owner,
-          repo: this.repo.repo,
-          pull_number: this.pull_request.number,
-          commit_id: commits[commits.length - 1].sha,
-          body: `Review from ${this.chat.model}: ${reviews.length} issues found.`,
-          event: 'COMMENT',
-          comments: reviews
-        })
-      } else {
-        console.log('No reviews to post')
-        await this.octokit.pulls.createReview({
-          owner: this.repo.owner,
-          repo: this.repo.repo,
-          pull_number: this.pull_request.number,
-          commit_id: commits[commits.length - 1].sha,
-          body: `Review from ${this.chat.model}: LGTM!`,
-          event: 'COMMENT'
-        })
+      try {
+        console.log(`Reviewing ${filename}`)
+        num_reviews += 1
+        const res = await this.chat.reviewPatch(patch)
+        console.log(`Review for ${filename}:`, res)
+        if (res && !res.includes('LGTM')) {
+          // skip LGTM
+          issues.push({
+            path: filename,
+            position: patch.split('\n').length - 1,
+            body: res
+          })
+        }
+      } catch (error) {
+        console.error(`Failed to review ${filename}:`, error)
+        continue
       }
-    } else {
-      console.log('No files changed')
     }
+
+    // create comments
+    const review_summary = `Review from [${this.chat.model}]:
+    - Total changes: ${num_changed_files}
+    - Filtered: ${num_filtered_files}
+    - Reviewed: ${num_reviews}
+    - Found issues: ${issues.length}`
+
+    await this.octokit.pulls.createReview({
+      owner: this.repo.owner,
+      repo: this.repo.repo,
+      pull_number: this.pull_request.number,
+      commit_id: commits[commits.length - 1].sha,
+      body: review_summary,
+      event: 'COMMENT',
+      comments: issues
+    })
   }
 }
 

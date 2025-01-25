@@ -1,17 +1,17 @@
 {
-  "name": "typescript-action",
-  "description": "GitHub Actions TypeScript template",
-  "version": "0.0.0",
-  "author": "",
+  "name": "lunar",
+  "description": "Yet another AI powered code reviewer",
+  "version": "0.0.1",
+  "author": "0xWelt",
   "type": "module",
   "private": true,
-  "homepage": "https://github.com/actions/typescript-action",
+  "homepage": "https://github.com/0xWelt/Lunar",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/actions/typescript-action.git"
+    "url": "git+https://github.com/0xWelt/Lunar.git"
   },
   "bugs": {
-    "url": "https://github.com/actions/typescript-action/issues"
+    "url": "https://github.com/0xWelt/Lunar/issues"
   },
   "keywords": [
     "actions"
@@ -38,9 +38,10 @@
   "license": "MIT",
   "dependencies": {
     "@actions/core": "^1.11.1",
+    "@actions/github": "^6.0.0",
     "@octokit/rest": "^21.1.0",
-    "openai": "^4.80.0",
-    "probot": "^13.4.1"
+    "minimatch": "^10.0.1",
+    "openai": "^4.80.1"
   },
   "devDependencies": {
     "@eslint/compat": "^1.2.5",
