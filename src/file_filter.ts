@@ -3,8 +3,6 @@ import { failWithOutput } from './utils.js'
 
 interface File {
   filename: string
-  status: string
-  contents_url: string
 }
 
 const matchPatterns = (patterns: string[], path: string) => {
@@ -23,7 +21,7 @@ const matchPatterns = (patterns: string[], path: string) => {
       try {
         return new RegExp(pattern).test(path)
       } catch (e) {
-        failWithOutput(`Invalid pattern: ${pattern} with error ${e}`)
+        failWithOutput(`Invalid pattern: ${pattern} with ${e}`)
         return false
       }
     }
@@ -31,15 +29,12 @@ const matchPatterns = (patterns: string[], path: string) => {
 }
 
 export const filterFile = (file: File) => {
-  const ignore_patterns = (process.env.IGNORE_PATTERNS || '')
+  // if ignorePatterns is not empty, ignore files that match the pattern
+  const ignore_patterns = 'autowsgr/data/**/*'
     .split(',')
     .filter((v) => Boolean(v.trim()))
-  const url = new URL(file.contents_url)
-
-  // if ignorePatterns is not empty, ignore files that match the pattern
   if (ignore_patterns) {
-    return !matchPatterns(ignore_patterns, url.pathname)
+    return !matchPatterns(ignore_patterns, file.filename)
   }
-
   return true
 }
