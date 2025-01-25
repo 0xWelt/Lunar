@@ -1,4 +1,50 @@
-export const createReviewPrompt = (language: string, patch: string) => {
+import { OpenAI } from 'openai'
+import { failWithOutput } from './utils.js'
+
+export class Chat {
+  language: string
+  model: string
+  temperature: number
+  max_tokens: number
+  private openai: OpenAI
+
+  constructor() {
+    this.language = process.env.LANGUAGE || 'Chinese'
+    const supported_languages = ['Chinese', 'English']
+    if (!supported_languages.includes(this.language)) {
+      failWithOutput(`Language must be one of ${supported_languages}`)
+    }
+    this.model = process.env.MODEL || 'gpt-4o-mini'
+    this.temperature = process.env.TEMPERATURE ? +process.env.TEMPERATURE : 1.0
+    this.max_tokens = process.env.MAX_TOKENS ? +process.env.MAX_TOKENS : 4096
+
+    if (!process.env.OPENAI_API_KEY) {
+      failWithOutput('OPENAI_API_KEY is not set')
+    }
+    this.openai = new OpenAI({
+      apiKey: process.env.OPENAI_API_KEY,
+      baseURL: process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1'
+    })
+  }
+
+  public reviewPatch = async (patch: string) => {
+    const res = await this.openai.chat.completions.create({
+      messages: [
+        {
+          role: 'user',
+          content: createReviewPatchPrompt(this.language, patch)
+        }
+      ],
+      model: this.model,
+      temperature: this.temperature,
+      max_tokens: this.max_tokens
+    })
+
+    return res.choices?.[0].message.content
+  }
+}
+
+const createReviewPatchPrompt = (language: string, patch: string) => {
   switch (language) {
     case 'Chinese':
       return `

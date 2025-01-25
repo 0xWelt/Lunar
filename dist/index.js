@@ -28,5361 +28,6 @@ import require$$0$9 from 'diagnostics_channel';
 import require$$2$3 from 'child_process';
 import require$$6$1 from 'timers';
 
-const default_format = 'RFC3986';
-const formatters = {
-    RFC1738: (v) => String(v).replace(/%20/g, '+'),
-    RFC3986: (v) => String(v),
-};
-const RFC1738 = 'RFC1738';
-
-const is_array$1 = Array.isArray;
-const hex_table = (() => {
-    const array = [];
-    for (let i = 0; i < 256; ++i) {
-        array.push('%' + ((i < 16 ? '0' : '') + i.toString(16)).toUpperCase());
-    }
-    return array;
-})();
-const limit = 1024;
-const encode = (str, _defaultEncoder, charset, _kind, format) => {
-    // This code was originally written by Brian White for the io.js core querystring library.
-    // It has been adapted here for stricter adherence to RFC 3986
-    if (str.length === 0) {
-        return str;
-    }
-    let string = str;
-    if (typeof str === 'symbol') {
-        string = Symbol.prototype.toString.call(str);
-    }
-    else if (typeof str !== 'string') {
-        string = String(str);
-    }
-    if (charset === 'iso-8859-1') {
-        return escape(string).replace(/%u[0-9a-f]{4}/gi, function ($0) {
-            return '%26%23' + parseInt($0.slice(2), 16) + '%3B';
-        });
-    }
-    let out = '';
-    for (let j = 0; j < string.length; j += limit) {
-        const segment = string.length >= limit ? string.slice(j, j + limit) : string;
-        const arr = [];
-        for (let i = 0; i < segment.length; ++i) {
-            let c = segment.charCodeAt(i);
-            if (c === 0x2d || // -
-                c === 0x2e || // .
-                c === 0x5f || // _
-                c === 0x7e || // ~
-                (c >= 0x30 && c <= 0x39) || // 0-9
-                (c >= 0x41 && c <= 0x5a) || // a-z
-                (c >= 0x61 && c <= 0x7a) || // A-Z
-                (format === RFC1738 && (c === 0x28 || c === 0x29)) // ( )
-            ) {
-                arr[arr.length] = segment.charAt(i);
-                continue;
-            }
-            if (c < 0x80) {
-                arr[arr.length] = hex_table[c];
-                continue;
-            }
-            if (c < 0x800) {
-                arr[arr.length] = hex_table[0xc0 | (c >> 6)] + hex_table[0x80 | (c & 0x3f)];
-                continue;
-            }
-            if (c < 0xd800 || c >= 0xe000) {
-                arr[arr.length] =
-                    hex_table[0xe0 | (c >> 12)] + hex_table[0x80 | ((c >> 6) & 0x3f)] + hex_table[0x80 | (c & 0x3f)];
-                continue;
-            }
-            i += 1;
-            c = 0x10000 + (((c & 0x3ff) << 10) | (segment.charCodeAt(i) & 0x3ff));
-            arr[arr.length] =
-                hex_table[0xf0 | (c >> 18)] +
-                    hex_table[0x80 | ((c >> 12) & 0x3f)] +
-                    hex_table[0x80 | ((c >> 6) & 0x3f)] +
-                    hex_table[0x80 | (c & 0x3f)];
-        }
-        out += arr.join('');
-    }
-    return out;
-};
-function is_buffer(obj) {
-    if (!obj || typeof obj !== 'object') {
-        return false;
-    }
-    return !!(obj.constructor && obj.constructor.isBuffer && obj.constructor.isBuffer(obj));
-}
-function maybe_map(val, fn) {
-    if (is_array$1(val)) {
-        const mapped = [];
-        for (let i = 0; i < val.length; i += 1) {
-            mapped.push(fn(val[i]));
-        }
-        return mapped;
-    }
-    return fn(val);
-}
-
-const has = Object.prototype.hasOwnProperty;
-const array_prefix_generators = {
-    brackets(prefix) {
-        return String(prefix) + '[]';
-    },
-    comma: 'comma',
-    indices(prefix, key) {
-        return String(prefix) + '[' + key + ']';
-    },
-    repeat(prefix) {
-        return String(prefix);
-    },
-};
-const is_array = Array.isArray;
-const push = Array.prototype.push;
-const push_to_array = function (arr, value_or_array) {
-    push.apply(arr, is_array(value_or_array) ? value_or_array : [value_or_array]);
-};
-const to_ISO = Date.prototype.toISOString;
-const defaults = {
-    addQueryPrefix: false,
-    allowDots: false,
-    allowEmptyArrays: false,
-    arrayFormat: 'indices',
-    charset: 'utf-8',
-    charsetSentinel: false,
-    delimiter: '&',
-    encode: true,
-    encodeDotInKeys: false,
-    encoder: encode,
-    encodeValuesOnly: false,
-    format: default_format,
-    formatter: formatters[default_format],
-    /** @deprecated */
-    indices: false,
-    serializeDate(date) {
-        return to_ISO.call(date);
-    },
-    skipNulls: false,
-    strictNullHandling: false,
-};
-function is_non_nullish_primitive(v) {
-    return (typeof v === 'string' ||
-        typeof v === 'number' ||
-        typeof v === 'boolean' ||
-        typeof v === 'symbol' ||
-        typeof v === 'bigint');
-}
-const sentinel = {};
-function inner_stringify(object, prefix, generateArrayPrefix, commaRoundTrip, allowEmptyArrays, strictNullHandling, skipNulls, encodeDotInKeys, encoder, filter, sort, allowDots, serializeDate, format, formatter, encodeValuesOnly, charset, sideChannel) {
-    let obj = object;
-    let tmp_sc = sideChannel;
-    let step = 0;
-    let find_flag = false;
-    while ((tmp_sc = tmp_sc.get(sentinel)) !== undefined && !find_flag) {
-        // Where object last appeared in the ref tree
-        const pos = tmp_sc.get(object);
-        step += 1;
-        if (typeof pos !== 'undefined') {
-            if (pos === step) {
-                throw new RangeError('Cyclic object value');
-            }
-            else {
-                find_flag = true; // Break while
-            }
-        }
-        if (typeof tmp_sc.get(sentinel) === 'undefined') {
-            step = 0;
-        }
-    }
-    if (typeof filter === 'function') {
-        obj = filter(prefix, obj);
-    }
-    else if (obj instanceof Date) {
-        obj = serializeDate?.(obj);
-    }
-    else if (generateArrayPrefix === 'comma' && is_array(obj)) {
-        obj = maybe_map(obj, function (value) {
-            if (value instanceof Date) {
-                return serializeDate?.(value);
-            }
-            return value;
-        });
-    }
-    if (obj === null) {
-        if (strictNullHandling) {
-            return encoder && !encodeValuesOnly ?
-                // @ts-expect-error
-                encoder(prefix, defaults.encoder, charset, 'key', format)
-                : prefix;
-        }
-        obj = '';
-    }
-    if (is_non_nullish_primitive(obj) || is_buffer(obj)) {
-        if (encoder) {
-            const key_value = encodeValuesOnly ? prefix
-                // @ts-expect-error
-                : encoder(prefix, defaults.encoder, charset, 'key', format);
-            return [
-                formatter?.(key_value) +
-                    '=' +
-                    // @ts-expect-error
-                    formatter?.(encoder(obj, defaults.encoder, charset, 'value', format)),
-            ];
-        }
-        return [formatter?.(prefix) + '=' + formatter?.(String(obj))];
-    }
-    const values = [];
-    if (typeof obj === 'undefined') {
-        return values;
-    }
-    let obj_keys;
-    if (generateArrayPrefix === 'comma' && is_array(obj)) {
-        // we need to join elements in
-        if (encodeValuesOnly && encoder) {
-            // @ts-expect-error values only
-            obj = maybe_map(obj, encoder);
-        }
-        obj_keys = [{ value: obj.length > 0 ? obj.join(',') || null : undefined }];
-    }
-    else if (is_array(filter)) {
-        obj_keys = filter;
-    }
-    else {
-        const keys = Object.keys(obj);
-        obj_keys = sort ? keys.sort(sort) : keys;
-    }
-    const encoded_prefix = encodeDotInKeys ? String(prefix).replace(/\./g, '%2E') : String(prefix);
-    const adjusted_prefix = commaRoundTrip && is_array(obj) && obj.length === 1 ? encoded_prefix + '[]' : encoded_prefix;
-    if (allowEmptyArrays && is_array(obj) && obj.length === 0) {
-        return adjusted_prefix + '[]';
-    }
-    for (let j = 0; j < obj_keys.length; ++j) {
-        const key = obj_keys[j];
-        const value = 
-        // @ts-ignore
-        typeof key === 'object' && typeof key.value !== 'undefined' ? key.value : obj[key];
-        if (skipNulls && value === null) {
-            continue;
-        }
-        // @ts-ignore
-        const encoded_key = allowDots && encodeDotInKeys ? key.replace(/\./g, '%2E') : key;
-        const key_prefix = is_array(obj) ?
-            typeof generateArrayPrefix === 'function' ?
-                generateArrayPrefix(adjusted_prefix, encoded_key)
-                : adjusted_prefix
-            : adjusted_prefix + (allowDots ? '.' + encoded_key : '[' + encoded_key + ']');
-        sideChannel.set(object, step);
-        const valueSideChannel = new WeakMap();
-        valueSideChannel.set(sentinel, sideChannel);
-        push_to_array(values, inner_stringify(value, key_prefix, generateArrayPrefix, commaRoundTrip, allowEmptyArrays, strictNullHandling, skipNulls, encodeDotInKeys, 
-        // @ts-ignore
-        generateArrayPrefix === 'comma' && encodeValuesOnly && is_array(obj) ? null : encoder, filter, sort, allowDots, serializeDate, format, formatter, encodeValuesOnly, charset, valueSideChannel));
-    }
-    return values;
-}
-function normalize_stringify_options(opts = defaults) {
-    if (typeof opts.allowEmptyArrays !== 'undefined' && typeof opts.allowEmptyArrays !== 'boolean') {
-        throw new TypeError('`allowEmptyArrays` option can only be `true` or `false`, when provided');
-    }
-    if (typeof opts.encodeDotInKeys !== 'undefined' && typeof opts.encodeDotInKeys !== 'boolean') {
-        throw new TypeError('`encodeDotInKeys` option can only be `true` or `false`, when provided');
-    }
-    if (opts.encoder !== null && typeof opts.encoder !== 'undefined' && typeof opts.encoder !== 'function') {
-        throw new TypeError('Encoder has to be a function.');
-    }
-    const charset = opts.charset || defaults.charset;
-    if (typeof opts.charset !== 'undefined' && opts.charset !== 'utf-8' && opts.charset !== 'iso-8859-1') {
-        throw new TypeError('The charset option must be either utf-8, iso-8859-1, or undefined');
-    }
-    let format = default_format;
-    if (typeof opts.format !== 'undefined') {
-        if (!has.call(formatters, opts.format)) {
-            throw new TypeError('Unknown format option provided.');
-        }
-        format = opts.format;
-    }
-    const formatter = formatters[format];
-    let filter = defaults.filter;
-    if (typeof opts.filter === 'function' || is_array(opts.filter)) {
-        filter = opts.filter;
-    }
-    let arrayFormat;
-    if (opts.arrayFormat && opts.arrayFormat in array_prefix_generators) {
-        arrayFormat = opts.arrayFormat;
-    }
-    else if ('indices' in opts) {
-        arrayFormat = opts.indices ? 'indices' : 'repeat';
-    }
-    else {
-        arrayFormat = defaults.arrayFormat;
-    }
-    if ('commaRoundTrip' in opts && typeof opts.commaRoundTrip !== 'boolean') {
-        throw new TypeError('`commaRoundTrip` must be a boolean, or absent');
-    }
-    const allowDots = typeof opts.allowDots === 'undefined' ?
-        !!opts.encodeDotInKeys === true ?
-            true
-            : defaults.allowDots
-        : !!opts.allowDots;
-    return {
-        addQueryPrefix: typeof opts.addQueryPrefix === 'boolean' ? opts.addQueryPrefix : defaults.addQueryPrefix,
-        // @ts-ignore
-        allowDots: allowDots,
-        allowEmptyArrays: typeof opts.allowEmptyArrays === 'boolean' ? !!opts.allowEmptyArrays : defaults.allowEmptyArrays,
-        arrayFormat: arrayFormat,
-        charset: charset,
-        charsetSentinel: typeof opts.charsetSentinel === 'boolean' ? opts.charsetSentinel : defaults.charsetSentinel,
-        commaRoundTrip: !!opts.commaRoundTrip,
-        delimiter: typeof opts.delimiter === 'undefined' ? defaults.delimiter : opts.delimiter,
-        encode: typeof opts.encode === 'boolean' ? opts.encode : defaults.encode,
-        encodeDotInKeys: typeof opts.encodeDotInKeys === 'boolean' ? opts.encodeDotInKeys : defaults.encodeDotInKeys,
-        encoder: typeof opts.encoder === 'function' ? opts.encoder : defaults.encoder,
-        encodeValuesOnly: typeof opts.encodeValuesOnly === 'boolean' ? opts.encodeValuesOnly : defaults.encodeValuesOnly,
-        filter: filter,
-        format: format,
-        formatter: formatter,
-        serializeDate: typeof opts.serializeDate === 'function' ? opts.serializeDate : defaults.serializeDate,
-        skipNulls: typeof opts.skipNulls === 'boolean' ? opts.skipNulls : defaults.skipNulls,
-        // @ts-ignore
-        sort: typeof opts.sort === 'function' ? opts.sort : null,
-        strictNullHandling: typeof opts.strictNullHandling === 'boolean' ? opts.strictNullHandling : defaults.strictNullHandling,
-    };
-}
-function stringify(object, opts = {}) {
-    let obj = object;
-    const options = normalize_stringify_options(opts);
-    let obj_keys;
-    let filter;
-    if (typeof options.filter === 'function') {
-        filter = options.filter;
-        obj = filter('', obj);
-    }
-    else if (is_array(options.filter)) {
-        filter = options.filter;
-        obj_keys = filter;
-    }
-    const keys = [];
-    if (typeof obj !== 'object' || obj === null) {
-        return '';
-    }
-    const generateArrayPrefix = array_prefix_generators[options.arrayFormat];
-    const commaRoundTrip = generateArrayPrefix === 'comma' && options.commaRoundTrip;
-    if (!obj_keys) {
-        obj_keys = Object.keys(obj);
-    }
-    if (options.sort) {
-        obj_keys.sort(options.sort);
-    }
-    const sideChannel = new WeakMap();
-    for (let i = 0; i < obj_keys.length; ++i) {
-        const key = obj_keys[i];
-        if (options.skipNulls && obj[key] === null) {
-            continue;
-        }
-        push_to_array(keys, inner_stringify(obj[key], key, 
-        // @ts-expect-error
-        generateArrayPrefix, commaRoundTrip, options.allowEmptyArrays, options.strictNullHandling, options.skipNulls, options.encodeDotInKeys, options.encode ? options.encoder : null, options.filter, options.sort, options.allowDots, options.serializeDate, options.format, options.formatter, options.encodeValuesOnly, options.charset, sideChannel));
-    }
-    const joined = keys.join(options.delimiter);
-    let prefix = options.addQueryPrefix === true ? '?' : '';
-    if (options.charsetSentinel) {
-        if (options.charset === 'iso-8859-1') {
-            // encodeURIComponent('&#10003;'), the "numeric entity" representation of a checkmark
-            prefix += 'utf8=%26%2310003%3B&';
-        }
-        else {
-            // encodeURIComponent('✓')
-            prefix += 'utf8=%E2%9C%93&';
-        }
-    }
-    return joined.length > 0 ? prefix + joined : '';
-}
-
-const VERSION$e = '4.80.0'; // x-release-please-version
-
-let auto = false;
-let kind = undefined;
-let fetch$1 = undefined;
-let FormData$1 = undefined;
-let File$1 = undefined;
-let ReadableStream$1 = undefined;
-let getMultipartRequestOptions = undefined;
-let getDefaultAgent = undefined;
-let fileFromPath = undefined;
-let isFsReadStream = undefined;
-function setShims(shims, options = { auto: false }) {
-    if (auto) {
-        throw new Error(`you must \`import 'openai/shims/${shims.kind}'\` before importing anything else from openai`);
-    }
-    if (kind) {
-        throw new Error(`can't \`import 'openai/shims/${shims.kind}'\` after \`import 'openai/shims/${kind}'\``);
-    }
-    auto = options.auto;
-    kind = shims.kind;
-    fetch$1 = shims.fetch;
-    FormData$1 = shims.FormData;
-    File$1 = shims.File;
-    ReadableStream$1 = shims.ReadableStream;
-    getMultipartRequestOptions = shims.getMultipartRequestOptions;
-    getDefaultAgent = shims.getDefaultAgent;
-    fileFromPath = shims.fileFromPath;
-    isFsReadStream = shims.isFsReadStream;
-}
-
-/**
- * Disclaimer: modules in _shims aren't intended to be imported by SDK users.
- */
-class MultipartBody {
-    constructor(body) {
-        this.body = body;
-    }
-    get [Symbol.toStringTag]() {
-        return 'MultipartBody';
-    }
-}
-
-function getRuntime({ manuallyImported } = {}) {
-    const recommendation = manuallyImported ?
-        `You may need to use polyfills`
-        : `Add one of these imports before your first \`import … from 'openai'\`:
-- \`import 'openai/shims/node'\` (if you're running on Node)
-- \`import 'openai/shims/web'\` (otherwise)
-`;
-    let _fetch, _Request, _Response, _Headers;
-    try {
-        // @ts-ignore
-        _fetch = fetch;
-        // @ts-ignore
-        _Request = Request;
-        // @ts-ignore
-        _Response = Response;
-        // @ts-ignore
-        _Headers = Headers;
-    }
-    catch (error) {
-        throw new Error(`this environment is missing the following Web Fetch API type: ${error.message}. ${recommendation}`);
-    }
-    return {
-        kind: 'web',
-        fetch: _fetch,
-        Request: _Request,
-        Response: _Response,
-        Headers: _Headers,
-        FormData: 
-        // @ts-ignore
-        typeof FormData !== 'undefined' ? FormData : (class FormData {
-            // @ts-ignore
-            constructor() {
-                throw new Error(`file uploads aren't supported in this environment yet as 'FormData' is undefined. ${recommendation}`);
-            }
-        }),
-        Blob: typeof Blob !== 'undefined' ? Blob : (class Blob {
-            constructor() {
-                throw new Error(`file uploads aren't supported in this environment yet as 'Blob' is undefined. ${recommendation}`);
-            }
-        }),
-        File: 
-        // @ts-ignore
-        typeof File !== 'undefined' ? File : (class File {
-            // @ts-ignore
-            constructor() {
-                throw new Error(`file uploads aren't supported in this environment yet as 'File' is undefined. ${recommendation}`);
-            }
-        }),
-        ReadableStream: 
-        // @ts-ignore
-        typeof ReadableStream !== 'undefined' ? ReadableStream : (class ReadableStream {
-            // @ts-ignore
-            constructor() {
-                throw new Error(`streaming isn't supported in this environment yet as 'ReadableStream' is undefined. ${recommendation}`);
-            }
-        }),
-        getMultipartRequestOptions: async (
-        // @ts-ignore
-        form, opts) => ({
-            ...opts,
-            body: new MultipartBody(form),
-        }),
-        getDefaultAgent: (url) => undefined,
-        fileFromPath: () => {
-            throw new Error('The `fileFromPath` function is only supported in Node. See the README for more details: https://www.github.com/openai/openai-node#file-uploads');
-        },
-        isFsReadStream: (value) => false,
-    };
-}
-
-/**
- * Disclaimer: modules in _shims aren't intended to be imported by SDK users.
- */
-if (!kind) setShims(getRuntime(), { auto: true });
-
-// File generated from our OpenAPI spec by Stainless. See CONTRIBUTING.md for details.
-class OpenAIError extends Error {
-}
-class APIError extends OpenAIError {
-    constructor(status, error, message, headers) {
-        super(`${APIError.makeMessage(status, error, message)}`);
-        this.status = status;
-        this.headers = headers;
-        this.request_id = headers?.['x-request-id'];
-        this.error = error;
-        const data = error;
-        this.code = data?.['code'];
-        this.param = data?.['param'];
-        this.type = data?.['type'];
-    }
-    static makeMessage(status, error, message) {
-        const msg = error?.message ?
-            typeof error.message === 'string' ?
-                error.message
-                : JSON.stringify(error.message)
-            : error ? JSON.stringify(error)
-                : message;
-        if (status && msg) {
-            return `${status} ${msg}`;
-        }
-        if (status) {
-            return `${status} status code (no body)`;
-        }
-        if (msg) {
-            return msg;
-        }
-        return '(no status code or body)';
-    }
-    static generate(status, errorResponse, message, headers) {
-        if (!status || !headers) {
-            return new APIConnectionError({ message, cause: castToError(errorResponse) });
-        }
-        const error = errorResponse?.['error'];
-        if (status === 400) {
-            return new BadRequestError(status, error, message, headers);
-        }
-        if (status === 401) {
-            return new AuthenticationError(status, error, message, headers);
-        }
-        if (status === 403) {
-            return new PermissionDeniedError(status, error, message, headers);
-        }
-        if (status === 404) {
-            return new NotFoundError(status, error, message, headers);
-        }
-        if (status === 409) {
-            return new ConflictError(status, error, message, headers);
-        }
-        if (status === 422) {
-            return new UnprocessableEntityError(status, error, message, headers);
-        }
-        if (status === 429) {
-            return new RateLimitError(status, error, message, headers);
-        }
-        if (status >= 500) {
-            return new InternalServerError(status, error, message, headers);
-        }
-        return new APIError(status, error, message, headers);
-    }
-}
-class APIUserAbortError extends APIError {
-    constructor({ message } = {}) {
-        super(undefined, undefined, message || 'Request was aborted.', undefined);
-    }
-}
-class APIConnectionError extends APIError {
-    constructor({ message, cause }) {
-        super(undefined, undefined, message || 'Connection error.', undefined);
-        // in some environments the 'cause' property is already declared
-        // @ts-ignore
-        if (cause)
-            this.cause = cause;
-    }
-}
-class APIConnectionTimeoutError extends APIConnectionError {
-    constructor({ message } = {}) {
-        super({ message: message ?? 'Request timed out.' });
-    }
-}
-class BadRequestError extends APIError {
-}
-class AuthenticationError extends APIError {
-}
-class PermissionDeniedError extends APIError {
-}
-class NotFoundError extends APIError {
-}
-class ConflictError extends APIError {
-}
-class UnprocessableEntityError extends APIError {
-}
-class RateLimitError extends APIError {
-}
-class InternalServerError extends APIError {
-}
-class LengthFinishReasonError extends OpenAIError {
-    constructor() {
-        super(`Could not parse response content as the length limit was reached`);
-    }
-}
-class ContentFilterFinishReasonError extends OpenAIError {
-    constructor() {
-        super(`Could not parse response content as the request was rejected by the content filter`);
-    }
-}
-
-/**
- * A re-implementation of httpx's `LineDecoder` in Python that handles incrementally
- * reading lines from text.
- *
- * https://github.com/encode/httpx/blob/920333ea98118e9cf617f246905d7b202510941c/httpx/_decoders.py#L258
- */
-class LineDecoder {
-    constructor() {
-        this.buffer = [];
-        this.trailingCR = false;
-    }
-    decode(chunk) {
-        let text = this.decodeText(chunk);
-        if (this.trailingCR) {
-            text = '\r' + text;
-            this.trailingCR = false;
-        }
-        if (text.endsWith('\r')) {
-            this.trailingCR = true;
-            text = text.slice(0, -1);
-        }
-        if (!text) {
-            return [];
-        }
-        const trailingNewline = LineDecoder.NEWLINE_CHARS.has(text[text.length - 1] || '');
-        let lines = text.split(LineDecoder.NEWLINE_REGEXP);
-        // if there is a trailing new line then the last entry will be an empty
-        // string which we don't care about
-        if (trailingNewline) {
-            lines.pop();
-        }
-        if (lines.length === 1 && !trailingNewline) {
-            this.buffer.push(lines[0]);
-            return [];
-        }
-        if (this.buffer.length > 0) {
-            lines = [this.buffer.join('') + lines[0], ...lines.slice(1)];
-            this.buffer = [];
-        }
-        if (!trailingNewline) {
-            this.buffer = [lines.pop() || ''];
-        }
-        return lines;
-    }
-    decodeText(bytes) {
-        if (bytes == null)
-            return '';
-        if (typeof bytes === 'string')
-            return bytes;
-        // Node:
-        if (typeof Buffer !== 'undefined') {
-            if (bytes instanceof Buffer) {
-                return bytes.toString();
-            }
-            if (bytes instanceof Uint8Array) {
-                return Buffer.from(bytes).toString();
-            }
-            throw new OpenAIError(`Unexpected: received non-Uint8Array (${bytes.constructor.name}) stream chunk in an environment with a global "Buffer" defined, which this library assumes to be Node. Please report this error.`);
-        }
-        // Browser
-        if (typeof TextDecoder !== 'undefined') {
-            if (bytes instanceof Uint8Array || bytes instanceof ArrayBuffer) {
-                this.textDecoder ?? (this.textDecoder = new TextDecoder('utf8'));
-                return this.textDecoder.decode(bytes);
-            }
-            throw new OpenAIError(`Unexpected: received non-Uint8Array/ArrayBuffer (${bytes.constructor.name}) in a web platform. Please report this error.`);
-        }
-        throw new OpenAIError(`Unexpected: neither Buffer nor TextDecoder are available as globals. Please report this error.`);
-    }
-    flush() {
-        if (!this.buffer.length && !this.trailingCR) {
-            return [];
-        }
-        const lines = [this.buffer.join('')];
-        this.buffer = [];
-        this.trailingCR = false;
-        return lines;
-    }
-}
-// prettier-ignore
-LineDecoder.NEWLINE_CHARS = new Set(['\n', '\r']);
-LineDecoder.NEWLINE_REGEXP = /\r\n|[\n\r]/g;
-
-/**
- * Most browsers don't yet have async iterable support for ReadableStream,
- * and Node has a very different way of reading bytes from its "ReadableStream".
- *
- * This polyfill was pulled from https://github.com/MattiasBuelens/web-streams-polyfill/pull/122#issuecomment-1627354490
- */
-function ReadableStreamToAsyncIterable(stream) {
-    if (stream[Symbol.asyncIterator])
-        return stream;
-    const reader = stream.getReader();
-    return {
-        async next() {
-            try {
-                const result = await reader.read();
-                if (result?.done)
-                    reader.releaseLock(); // release lock when stream becomes closed
-                return result;
-            }
-            catch (e) {
-                reader.releaseLock(); // release lock when stream becomes errored
-                throw e;
-            }
-        },
-        async return() {
-            const cancelPromise = reader.cancel();
-            reader.releaseLock();
-            await cancelPromise;
-            return { done: true, value: undefined };
-        },
-        [Symbol.asyncIterator]() {
-            return this;
-        },
-    };
-}
-
-class Stream {
-    constructor(iterator, controller) {
-        this.iterator = iterator;
-        this.controller = controller;
-    }
-    static fromSSEResponse(response, controller) {
-        let consumed = false;
-        async function* iterator() {
-            if (consumed) {
-                throw new Error('Cannot iterate over a consumed stream, use `.tee()` to split the stream.');
-            }
-            consumed = true;
-            let done = false;
-            try {
-                for await (const sse of _iterSSEMessages(response, controller)) {
-                    if (done)
-                        continue;
-                    if (sse.data.startsWith('[DONE]')) {
-                        done = true;
-                        continue;
-                    }
-                    if (sse.event === null) {
-                        let data;
-                        try {
-                            data = JSON.parse(sse.data);
-                        }
-                        catch (e) {
-                            console.error(`Could not parse message into JSON:`, sse.data);
-                            console.error(`From chunk:`, sse.raw);
-                            throw e;
-                        }
-                        if (data && data.error) {
-                            throw new APIError(undefined, data.error, undefined, undefined);
-                        }
-                        yield data;
-                    }
-                    else {
-                        let data;
-                        try {
-                            data = JSON.parse(sse.data);
-                        }
-                        catch (e) {
-                            console.error(`Could not parse message into JSON:`, sse.data);
-                            console.error(`From chunk:`, sse.raw);
-                            throw e;
-                        }
-                        // TODO: Is this where the error should be thrown?
-                        if (sse.event == 'error') {
-                            throw new APIError(undefined, data.error, data.message, undefined);
-                        }
-                        yield { event: sse.event, data: data };
-                    }
-                }
-                done = true;
-            }
-            catch (e) {
-                // If the user calls `stream.controller.abort()`, we should exit without throwing.
-                if (e instanceof Error && e.name === 'AbortError')
-                    return;
-                throw e;
-            }
-            finally {
-                // If the user `break`s, abort the ongoing request.
-                if (!done)
-                    controller.abort();
-            }
-        }
-        return new Stream(iterator, controller);
-    }
-    /**
-     * Generates a Stream from a newline-separated ReadableStream
-     * where each item is a JSON value.
-     */
-    static fromReadableStream(readableStream, controller) {
-        let consumed = false;
-        async function* iterLines() {
-            const lineDecoder = new LineDecoder();
-            const iter = ReadableStreamToAsyncIterable(readableStream);
-            for await (const chunk of iter) {
-                for (const line of lineDecoder.decode(chunk)) {
-                    yield line;
-                }
-            }
-            for (const line of lineDecoder.flush()) {
-                yield line;
-            }
-        }
-        async function* iterator() {
-            if (consumed) {
-                throw new Error('Cannot iterate over a consumed stream, use `.tee()` to split the stream.');
-            }
-            consumed = true;
-            let done = false;
-            try {
-                for await (const line of iterLines()) {
-                    if (done)
-                        continue;
-                    if (line)
-                        yield JSON.parse(line);
-                }
-                done = true;
-            }
-            catch (e) {
-                // If the user calls `stream.controller.abort()`, we should exit without throwing.
-                if (e instanceof Error && e.name === 'AbortError')
-                    return;
-                throw e;
-            }
-            finally {
-                // If the user `break`s, abort the ongoing request.
-                if (!done)
-                    controller.abort();
-            }
-        }
-        return new Stream(iterator, controller);
-    }
-    [Symbol.asyncIterator]() {
-        return this.iterator();
-    }
-    /**
-     * Splits the stream into two streams which can be
-     * independently read from at different speeds.
-     */
-    tee() {
-        const left = [];
-        const right = [];
-        const iterator = this.iterator();
-        const teeIterator = (queue) => {
-            return {
-                next: () => {
-                    if (queue.length === 0) {
-                        const result = iterator.next();
-                        left.push(result);
-                        right.push(result);
-                    }
-                    return queue.shift();
-                },
-            };
-        };
-        return [
-            new Stream(() => teeIterator(left), this.controller),
-            new Stream(() => teeIterator(right), this.controller),
-        ];
-    }
-    /**
-     * Converts this stream to a newline-separated ReadableStream of
-     * JSON stringified values in the stream
-     * which can be turned back into a Stream with `Stream.fromReadableStream()`.
-     */
-    toReadableStream() {
-        const self = this;
-        let iter;
-        const encoder = new TextEncoder();
-        return new ReadableStream$1({
-            async start() {
-                iter = self[Symbol.asyncIterator]();
-            },
-            async pull(ctrl) {
-                try {
-                    const { value, done } = await iter.next();
-                    if (done)
-                        return ctrl.close();
-                    const bytes = encoder.encode(JSON.stringify(value) + '\n');
-                    ctrl.enqueue(bytes);
-                }
-                catch (err) {
-                    ctrl.error(err);
-                }
-            },
-            async cancel() {
-                await iter.return?.();
-            },
-        });
-    }
-}
-async function* _iterSSEMessages(response, controller) {
-    if (!response.body) {
-        controller.abort();
-        throw new OpenAIError(`Attempted to iterate over a response with no body`);
-    }
-    const sseDecoder = new SSEDecoder();
-    const lineDecoder = new LineDecoder();
-    const iter = ReadableStreamToAsyncIterable(response.body);
-    for await (const sseChunk of iterSSEChunks(iter)) {
-        for (const line of lineDecoder.decode(sseChunk)) {
-            const sse = sseDecoder.decode(line);
-            if (sse)
-                yield sse;
-        }
-    }
-    for (const line of lineDecoder.flush()) {
-        const sse = sseDecoder.decode(line);
-        if (sse)
-            yield sse;
-    }
-}
-/**
- * Given an async iterable iterator, iterates over it and yields full
- * SSE chunks, i.e. yields when a double new-line is encountered.
- */
-async function* iterSSEChunks(iterator) {
-    let data = new Uint8Array();
-    for await (const chunk of iterator) {
-        if (chunk == null) {
-            continue;
-        }
-        const binaryChunk = chunk instanceof ArrayBuffer ? new Uint8Array(chunk)
-            : typeof chunk === 'string' ? new TextEncoder().encode(chunk)
-                : chunk;
-        let newData = new Uint8Array(data.length + binaryChunk.length);
-        newData.set(data);
-        newData.set(binaryChunk, data.length);
-        data = newData;
-        let patternIndex;
-        while ((patternIndex = findDoubleNewlineIndex(data)) !== -1) {
-            yield data.slice(0, patternIndex);
-            data = data.slice(patternIndex);
-        }
-    }
-    if (data.length > 0) {
-        yield data;
-    }
-}
-function findDoubleNewlineIndex(buffer) {
-    // This function searches the buffer for the end patterns (\r\r, \n\n, \r\n\r\n)
-    // and returns the index right after the first occurrence of any pattern,
-    // or -1 if none of the patterns are found.
-    const newline = 0x0a; // \n
-    const carriage = 0x0d; // \r
-    for (let i = 0; i < buffer.length - 2; i++) {
-        if (buffer[i] === newline && buffer[i + 1] === newline) {
-            // \n\n
-            return i + 2;
-        }
-        if (buffer[i] === carriage && buffer[i + 1] === carriage) {
-            // \r\r
-            return i + 2;
-        }
-        if (buffer[i] === carriage &&
-            buffer[i + 1] === newline &&
-            i + 3 < buffer.length &&
-            buffer[i + 2] === carriage &&
-            buffer[i + 3] === newline) {
-            // \r\n\r\n
-            return i + 4;
-        }
-    }
-    return -1;
-}
-class SSEDecoder {
-    constructor() {
-        this.event = null;
-        this.data = [];
-        this.chunks = [];
-    }
-    decode(line) {
-        if (line.endsWith('\r')) {
-            line = line.substring(0, line.length - 1);
-        }
-        if (!line) {
-            // empty line and we didn't previously encounter any messages
-            if (!this.event && !this.data.length)
-                return null;
-            const sse = {
-                event: this.event,
-                data: this.data.join('\n'),
-                raw: this.chunks,
-            };
-            this.event = null;
-            this.data = [];
-            this.chunks = [];
-            return sse;
-        }
-        this.chunks.push(line);
-        if (line.startsWith(':')) {
-            return null;
-        }
-        let [fieldname, _, value] = partition(line, ':');
-        if (value.startsWith(' ')) {
-            value = value.substring(1);
-        }
-        if (fieldname === 'event') {
-            this.event = value;
-        }
-        else if (fieldname === 'data') {
-            this.data.push(value);
-        }
-        return null;
-    }
-}
-function partition(str, delimiter) {
-    const index = str.indexOf(delimiter);
-    if (index !== -1) {
-        return [str.substring(0, index), delimiter, str.substring(index + delimiter.length)];
-    }
-    return [str, '', ''];
-}
-
-const isResponseLike = (value) => value != null &&
-    typeof value === 'object' &&
-    typeof value.url === 'string' &&
-    typeof value.blob === 'function';
-const isFileLike = (value) => value != null &&
-    typeof value === 'object' &&
-    typeof value.name === 'string' &&
-    typeof value.lastModified === 'number' &&
-    isBlobLike(value);
-/**
- * The BlobLike type omits arrayBuffer() because @types/node-fetch@^2.6.4 lacks it; but this check
- * adds the arrayBuffer() method type because it is available and used at runtime
- */
-const isBlobLike = (value) => value != null &&
-    typeof value === 'object' &&
-    typeof value.size === 'number' &&
-    typeof value.type === 'string' &&
-    typeof value.text === 'function' &&
-    typeof value.slice === 'function' &&
-    typeof value.arrayBuffer === 'function';
-const isUploadable = (value) => {
-    return isFileLike(value) || isResponseLike(value) || isFsReadStream(value);
-};
-/**
- * Helper for creating a {@link File} to pass to an SDK upload method from a variety of different data formats
- * @param value the raw content of the file.  Can be an {@link Uploadable}, {@link BlobLikePart}, or {@link AsyncIterable} of {@link BlobLikePart}s
- * @param {string=} name the name of the file. If omitted, toFile will try to determine a file name from bits if possible
- * @param {Object=} options additional properties
- * @param {string=} options.type the MIME type of the content
- * @param {number=} options.lastModified the last modified timestamp
- * @returns a {@link File} with the given properties
- */
-async function toFile(value, name, options) {
-    // If it's a promise, resolve it.
-    value = await value;
-    // If we've been given a `File` we don't need to do anything
-    if (isFileLike(value)) {
-        return value;
-    }
-    if (isResponseLike(value)) {
-        const blob = await value.blob();
-        name || (name = new URL(value.url).pathname.split(/[\\/]/).pop() ?? 'unknown_file');
-        // we need to convert the `Blob` into an array buffer because the `Blob` class
-        // that `node-fetch` defines is incompatible with the web standard which results
-        // in `new File` interpreting it as a string instead of binary data.
-        const data = isBlobLike(blob) ? [(await blob.arrayBuffer())] : [blob];
-        return new File$1(data, name, options);
-    }
-    const bits = await getBytes(value);
-    name || (name = getName(value) ?? 'unknown_file');
-    if (!options?.type) {
-        const type = bits[0]?.type;
-        if (typeof type === 'string') {
-            options = { ...options, type };
-        }
-    }
-    return new File$1(bits, name, options);
-}
-async function getBytes(value) {
-    let parts = [];
-    if (typeof value === 'string' ||
-        ArrayBuffer.isView(value) || // includes Uint8Array, Buffer, etc.
-        value instanceof ArrayBuffer) {
-        parts.push(value);
-    }
-    else if (isBlobLike(value)) {
-        parts.push(await value.arrayBuffer());
-    }
-    else if (isAsyncIterableIterator(value) // includes Readable, ReadableStream, etc.
-    ) {
-        for await (const chunk of value) {
-            parts.push(chunk); // TODO, consider validating?
-        }
-    }
-    else {
-        throw new Error(`Unexpected data type: ${typeof value}; constructor: ${value?.constructor
-            ?.name}; props: ${propsForError(value)}`);
-    }
-    return parts;
-}
-function propsForError(value) {
-    const props = Object.getOwnPropertyNames(value);
-    return `[${props.map((p) => `"${p}"`).join(', ')}]`;
-}
-function getName(value) {
-    return (getStringFromMaybeBuffer(value.name) ||
-        getStringFromMaybeBuffer(value.filename) ||
-        // For fs.ReadStream
-        getStringFromMaybeBuffer(value.path)?.split(/[\\/]/).pop());
-}
-const getStringFromMaybeBuffer = (x) => {
-    if (typeof x === 'string')
-        return x;
-    if (typeof Buffer !== 'undefined' && x instanceof Buffer)
-        return String(x);
-    return undefined;
-};
-const isAsyncIterableIterator = (value) => value != null && typeof value === 'object' && typeof value[Symbol.asyncIterator] === 'function';
-const isMultipartBody = (body) => body && typeof body === 'object' && body.body && body[Symbol.toStringTag] === 'MultipartBody';
-const multipartFormRequestOptions = async (opts) => {
-    const form = await createForm(opts.body);
-    return getMultipartRequestOptions(form, opts);
-};
-const createForm = async (body) => {
-    const form = new FormData$1();
-    await Promise.all(Object.entries(body || {}).map(([key, value]) => addFormValue(form, key, value)));
-    return form;
-};
-const addFormValue = async (form, key, value) => {
-    if (value === undefined)
-        return;
-    if (value == null) {
-        throw new TypeError(`Received null for "${key}"; to pass null in FormData, you must use the string 'null'`);
-    }
-    // TODO: make nested formats configurable
-    if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
-        form.append(key, String(value));
-    }
-    else if (isUploadable(value)) {
-        const file = await toFile(value);
-        form.append(key, file);
-    }
-    else if (Array.isArray(value)) {
-        await Promise.all(value.map((entry) => addFormValue(form, key + '[]', entry)));
-    }
-    else if (typeof value === 'object') {
-        await Promise.all(Object.entries(value).map(([name, prop]) => addFormValue(form, `${key}[${name}]`, prop)));
-    }
-    else {
-        throw new TypeError(`Invalid value given to form, expected a string, number, boolean, object, Array, File or Blob but got ${value} instead`);
-    }
-};
-
-var __classPrivateFieldSet$3 = (undefined && undefined.__classPrivateFieldSet) || function (receiver, state, value, kind, f) {
-    if (kind === "m") throw new TypeError("Private method is not writable");
-    if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a setter");
-    if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot write private member to an object whose class did not declare it");
-    return (kind === "a" ? f.call(receiver, value) : f ? f.value = value : state.set(receiver, value)), value;
-};
-var __classPrivateFieldGet$4 = (undefined && undefined.__classPrivateFieldGet) || function (receiver, state, kind, f) {
-    if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a getter");
-    if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot read private member from an object whose class did not declare it");
-    return kind === "m" ? f : kind === "a" ? f.call(receiver) : f ? f.value : state.get(receiver);
-};
-var _AbstractPage_client;
-async function defaultParseResponse(props) {
-    const { response } = props;
-    if (props.options.stream) {
-        debug('response', response.status, response.url, response.headers, response.body);
-        // Note: there is an invariant here that isn't represented in the type system
-        // that if you set `stream: true` the response type must also be `Stream<T>`
-        if (props.options.__streamClass) {
-            return props.options.__streamClass.fromSSEResponse(response, props.controller);
-        }
-        return Stream.fromSSEResponse(response, props.controller);
-    }
-    // fetch refuses to read the body when the status code is 204.
-    if (response.status === 204) {
-        return null;
-    }
-    if (props.options.__binaryResponse) {
-        return response;
-    }
-    const contentType = response.headers.get('content-type');
-    const isJSON = contentType?.includes('application/json') || contentType?.includes('application/vnd.api+json');
-    if (isJSON) {
-        const json = await response.json();
-        debug('response', response.status, response.url, response.headers, json);
-        return _addRequestID(json, response);
-    }
-    const text = await response.text();
-    debug('response', response.status, response.url, response.headers, text);
-    // TODO handle blob, arraybuffer, other content types, etc.
-    return text;
-}
-function _addRequestID(value, response) {
-    if (!value || typeof value !== 'object' || Array.isArray(value)) {
-        return value;
-    }
-    return Object.defineProperty(value, '_request_id', {
-        value: response.headers.get('x-request-id'),
-        enumerable: false,
-    });
-}
-/**
- * A subclass of `Promise` providing additional helper methods
- * for interacting with the SDK.
- */
-class APIPromise extends Promise {
-    constructor(responsePromise, parseResponse = defaultParseResponse) {
-        super((resolve) => {
-            // this is maybe a bit weird but this has to be a no-op to not implicitly
-            // parse the response body; instead .then, .catch, .finally are overridden
-            // to parse the response
-            resolve(null);
-        });
-        this.responsePromise = responsePromise;
-        this.parseResponse = parseResponse;
-    }
-    _thenUnwrap(transform) {
-        return new APIPromise(this.responsePromise, async (props) => _addRequestID(transform(await this.parseResponse(props), props), props.response));
-    }
-    /**
-     * Gets the raw `Response` instance instead of parsing the response
-     * data.
-     *
-     * If you want to parse the response body but still get the `Response`
-     * instance, you can use {@link withResponse()}.
-     *
-     * 👋 Getting the wrong TypeScript type for `Response`?
-     * Try setting `"moduleResolution": "NodeNext"` if you can,
-     * or add one of these imports before your first `import … from 'openai'`:
-     * - `import 'openai/shims/node'` (if you're running on Node)
-     * - `import 'openai/shims/web'` (otherwise)
-     */
-    asResponse() {
-        return this.responsePromise.then((p) => p.response);
-    }
-    /**
-     * Gets the parsed response data, the raw `Response` instance and the ID of the request,
-     * returned via the X-Request-ID header which is useful for debugging requests and reporting
-     * issues to OpenAI.
-     *
-     * If you just want to get the raw `Response` instance without parsing it,
-     * you can use {@link asResponse()}.
-     *
-     *
-     * 👋 Getting the wrong TypeScript type for `Response`?
-     * Try setting `"moduleResolution": "NodeNext"` if you can,
-     * or add one of these imports before your first `import … from 'openai'`:
-     * - `import 'openai/shims/node'` (if you're running on Node)
-     * - `import 'openai/shims/web'` (otherwise)
-     */
-    async withResponse() {
-        const [data, response] = await Promise.all([this.parse(), this.asResponse()]);
-        return { data, response, request_id: response.headers.get('x-request-id') };
-    }
-    parse() {
-        if (!this.parsedPromise) {
-            this.parsedPromise = this.responsePromise.then(this.parseResponse);
-        }
-        return this.parsedPromise;
-    }
-    then(onfulfilled, onrejected) {
-        return this.parse().then(onfulfilled, onrejected);
-    }
-    catch(onrejected) {
-        return this.parse().catch(onrejected);
-    }
-    finally(onfinally) {
-        return this.parse().finally(onfinally);
-    }
-}
-class APIClient {
-    constructor({ baseURL, maxRetries = 2, timeout = 600000, // 10 minutes
-    httpAgent, fetch: overriddenFetch, }) {
-        this.baseURL = baseURL;
-        this.maxRetries = validatePositiveInteger('maxRetries', maxRetries);
-        this.timeout = validatePositiveInteger('timeout', timeout);
-        this.httpAgent = httpAgent;
-        this.fetch = overriddenFetch ?? fetch$1;
-    }
-    authHeaders(opts) {
-        return {};
-    }
-    /**
-     * Override this to add your own default headers, for example:
-     *
-     *  {
-     *    ...super.defaultHeaders(),
-     *    Authorization: 'Bearer 123',
-     *  }
-     */
-    defaultHeaders(opts) {
-        return {
-            Accept: 'application/json',
-            'Content-Type': 'application/json',
-            'User-Agent': this.getUserAgent(),
-            ...getPlatformHeaders(),
-            ...this.authHeaders(opts),
-        };
-    }
-    /**
-     * Override this to add your own headers validation:
-     */
-    validateHeaders(headers, customHeaders) { }
-    defaultIdempotencyKey() {
-        return `stainless-node-retry-${uuid4()}`;
-    }
-    get(path, opts) {
-        return this.methodRequest('get', path, opts);
-    }
-    post(path, opts) {
-        return this.methodRequest('post', path, opts);
-    }
-    patch(path, opts) {
-        return this.methodRequest('patch', path, opts);
-    }
-    put(path, opts) {
-        return this.methodRequest('put', path, opts);
-    }
-    delete(path, opts) {
-        return this.methodRequest('delete', path, opts);
-    }
-    methodRequest(method, path, opts) {
-        return this.request(Promise.resolve(opts).then(async (opts) => {
-            const body = opts && isBlobLike(opts?.body) ? new DataView(await opts.body.arrayBuffer())
-                : opts?.body instanceof DataView ? opts.body
-                    : opts?.body instanceof ArrayBuffer ? new DataView(opts.body)
-                        : opts && ArrayBuffer.isView(opts?.body) ? new DataView(opts.body.buffer)
-                            : opts?.body;
-            return { method, path, ...opts, body };
-        }));
-    }
-    getAPIList(path, Page, opts) {
-        return this.requestAPIList(Page, { method: 'get', path, ...opts });
-    }
-    calculateContentLength(body) {
-        if (typeof body === 'string') {
-            if (typeof Buffer !== 'undefined') {
-                return Buffer.byteLength(body, 'utf8').toString();
-            }
-            if (typeof TextEncoder !== 'undefined') {
-                const encoder = new TextEncoder();
-                const encoded = encoder.encode(body);
-                return encoded.length.toString();
-            }
-        }
-        else if (ArrayBuffer.isView(body)) {
-            return body.byteLength.toString();
-        }
-        return null;
-    }
-    buildRequest(options, { retryCount = 0 } = {}) {
-        const { method, path, query, headers: headers = {} } = options;
-        const body = ArrayBuffer.isView(options.body) || (options.__binaryRequest && typeof options.body === 'string') ?
-            options.body
-            : isMultipartBody(options.body) ? options.body.body
-                : options.body ? JSON.stringify(options.body, null, 2)
-                    : null;
-        const contentLength = this.calculateContentLength(body);
-        const url = this.buildURL(path, query);
-        if ('timeout' in options)
-            validatePositiveInteger('timeout', options.timeout);
-        const timeout = options.timeout ?? this.timeout;
-        const httpAgent = options.httpAgent ?? this.httpAgent ?? getDefaultAgent(url);
-        const minAgentTimeout = timeout + 1000;
-        if (typeof httpAgent?.options?.timeout === 'number' &&
-            minAgentTimeout > (httpAgent.options.timeout ?? 0)) {
-            // Allow any given request to bump our agent active socket timeout.
-            // This may seem strange, but leaking active sockets should be rare and not particularly problematic,
-            // and without mutating agent we would need to create more of them.
-            // This tradeoff optimizes for performance.
-            httpAgent.options.timeout = minAgentTimeout;
-        }
-        if (this.idempotencyHeader && method !== 'get') {
-            if (!options.idempotencyKey)
-                options.idempotencyKey = this.defaultIdempotencyKey();
-            headers[this.idempotencyHeader] = options.idempotencyKey;
-        }
-        const reqHeaders = this.buildHeaders({ options, headers, contentLength, retryCount });
-        const req = {
-            method,
-            ...(body && { body: body }),
-            headers: reqHeaders,
-            ...(httpAgent && { agent: httpAgent }),
-            // @ts-ignore node-fetch uses a custom AbortSignal type that is
-            // not compatible with standard web types
-            signal: options.signal ?? null,
-        };
-        return { req, url, timeout };
-    }
-    buildHeaders({ options, headers, contentLength, retryCount, }) {
-        const reqHeaders = {};
-        if (contentLength) {
-            reqHeaders['content-length'] = contentLength;
-        }
-        const defaultHeaders = this.defaultHeaders(options);
-        applyHeadersMut(reqHeaders, defaultHeaders);
-        applyHeadersMut(reqHeaders, headers);
-        // let builtin fetch set the Content-Type for multipart bodies
-        if (isMultipartBody(options.body) && kind !== 'node') {
-            delete reqHeaders['content-type'];
-        }
-        // Don't set the retry count header if it was already set or removed through default headers or by the
-        // caller. We check `defaultHeaders` and `headers`, which can contain nulls, instead of `reqHeaders` to
-        // account for the removal case.
-        if (getHeader(defaultHeaders, 'x-stainless-retry-count') === undefined &&
-            getHeader(headers, 'x-stainless-retry-count') === undefined) {
-            reqHeaders['x-stainless-retry-count'] = String(retryCount);
-        }
-        this.validateHeaders(reqHeaders, headers);
-        return reqHeaders;
-    }
-    /**
-     * Used as a callback for mutating the given `FinalRequestOptions` object.
-     */
-    async prepareOptions(options) { }
-    /**
-     * Used as a callback for mutating the given `RequestInit` object.
-     *
-     * This is useful for cases where you want to add certain headers based off of
-     * the request properties, e.g. `method` or `url`.
-     */
-    async prepareRequest(request, { url, options }) { }
-    parseHeaders(headers) {
-        return (!headers ? {}
-            : Symbol.iterator in headers ?
-                Object.fromEntries(Array.from(headers).map((header) => [...header]))
-                : { ...headers });
-    }
-    makeStatusError(status, error, message, headers) {
-        return APIError.generate(status, error, message, headers);
-    }
-    request(options, remainingRetries = null) {
-        return new APIPromise(this.makeRequest(options, remainingRetries));
-    }
-    async makeRequest(optionsInput, retriesRemaining) {
-        const options = await optionsInput;
-        const maxRetries = options.maxRetries ?? this.maxRetries;
-        if (retriesRemaining == null) {
-            retriesRemaining = maxRetries;
-        }
-        await this.prepareOptions(options);
-        const { req, url, timeout } = this.buildRequest(options, { retryCount: maxRetries - retriesRemaining });
-        await this.prepareRequest(req, { url, options });
-        debug('request', url, options, req.headers);
-        if (options.signal?.aborted) {
-            throw new APIUserAbortError();
-        }
-        const controller = new AbortController();
-        const response = await this.fetchWithTimeout(url, req, timeout, controller).catch(castToError);
-        if (response instanceof Error) {
-            if (options.signal?.aborted) {
-                throw new APIUserAbortError();
-            }
-            if (retriesRemaining) {
-                return this.retryRequest(options, retriesRemaining);
-            }
-            if (response.name === 'AbortError') {
-                throw new APIConnectionTimeoutError();
-            }
-            throw new APIConnectionError({ cause: response });
-        }
-        const responseHeaders = createResponseHeaders(response.headers);
-        if (!response.ok) {
-            if (retriesRemaining && this.shouldRetry(response)) {
-                const retryMessage = `retrying, ${retriesRemaining} attempts remaining`;
-                debug(`response (error; ${retryMessage})`, response.status, url, responseHeaders);
-                return this.retryRequest(options, retriesRemaining, responseHeaders);
-            }
-            const errText = await response.text().catch((e) => castToError(e).message);
-            const errJSON = safeJSON(errText);
-            const errMessage = errJSON ? undefined : errText;
-            const retryMessage = retriesRemaining ? `(error; no more retries left)` : `(error; not retryable)`;
-            debug(`response (error; ${retryMessage})`, response.status, url, responseHeaders, errMessage);
-            const err = this.makeStatusError(response.status, errJSON, errMessage, responseHeaders);
-            throw err;
-        }
-        return { response, options, controller };
-    }
-    requestAPIList(Page, options) {
-        const request = this.makeRequest(options, null);
-        return new PagePromise(this, request, Page);
-    }
-    buildURL(path, query) {
-        const url = isAbsoluteURL(path) ?
-            new URL(path)
-            : new URL(this.baseURL + (this.baseURL.endsWith('/') && path.startsWith('/') ? path.slice(1) : path));
-        const defaultQuery = this.defaultQuery();
-        if (!isEmptyObj(defaultQuery)) {
-            query = { ...defaultQuery, ...query };
-        }
-        if (typeof query === 'object' && query && !Array.isArray(query)) {
-            url.search = this.stringifyQuery(query);
-        }
-        return url.toString();
-    }
-    stringifyQuery(query) {
-        return Object.entries(query)
-            .filter(([_, value]) => typeof value !== 'undefined')
-            .map(([key, value]) => {
-            if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
-                return `${encodeURIComponent(key)}=${encodeURIComponent(value)}`;
-            }
-            if (value === null) {
-                return `${encodeURIComponent(key)}=`;
-            }
-            throw new OpenAIError(`Cannot stringify type ${typeof value}; Expected string, number, boolean, or null. If you need to pass nested query parameters, you can manually encode them, e.g. { query: { 'foo[key1]': value1, 'foo[key2]': value2 } }, and please open a GitHub issue requesting better support for your use case.`);
-        })
-            .join('&');
-    }
-    async fetchWithTimeout(url, init, ms, controller) {
-        const { signal, ...options } = init || {};
-        if (signal)
-            signal.addEventListener('abort', () => controller.abort());
-        const timeout = setTimeout(() => controller.abort(), ms);
-        const fetchOptions = {
-            signal: controller.signal,
-            ...options,
-        };
-        if (fetchOptions.method) {
-            // Custom methods like 'patch' need to be uppercased
-            // See https://github.com/nodejs/undici/issues/2294
-            fetchOptions.method = fetchOptions.method.toUpperCase();
-        }
-        return (
-        // use undefined this binding; fetch errors if bound to something else in browser/cloudflare
-        this.fetch.call(undefined, url, fetchOptions).finally(() => {
-            clearTimeout(timeout);
-        }));
-    }
-    shouldRetry(response) {
-        // Note this is not a standard header.
-        const shouldRetryHeader = response.headers.get('x-should-retry');
-        // If the server explicitly says whether or not to retry, obey.
-        if (shouldRetryHeader === 'true')
-            return true;
-        if (shouldRetryHeader === 'false')
-            return false;
-        // Retry on request timeouts.
-        if (response.status === 408)
-            return true;
-        // Retry on lock timeouts.
-        if (response.status === 409)
-            return true;
-        // Retry on rate limits.
-        if (response.status === 429)
-            return true;
-        // Retry internal errors.
-        if (response.status >= 500)
-            return true;
-        return false;
-    }
-    async retryRequest(options, retriesRemaining, responseHeaders) {
-        let timeoutMillis;
-        // Note the `retry-after-ms` header may not be standard, but is a good idea and we'd like proactive support for it.
-        const retryAfterMillisHeader = responseHeaders?.['retry-after-ms'];
-        if (retryAfterMillisHeader) {
-            const timeoutMs = parseFloat(retryAfterMillisHeader);
-            if (!Number.isNaN(timeoutMs)) {
-                timeoutMillis = timeoutMs;
-            }
-        }
-        // About the Retry-After header: https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Retry-After
-        const retryAfterHeader = responseHeaders?.['retry-after'];
-        if (retryAfterHeader && !timeoutMillis) {
-            const timeoutSeconds = parseFloat(retryAfterHeader);
-            if (!Number.isNaN(timeoutSeconds)) {
-                timeoutMillis = timeoutSeconds * 1000;
-            }
-            else {
-                timeoutMillis = Date.parse(retryAfterHeader) - Date.now();
-            }
-        }
-        // If the API asks us to wait a certain amount of time (and it's a reasonable amount),
-        // just do what it says, but otherwise calculate a default
-        if (!(timeoutMillis && 0 <= timeoutMillis && timeoutMillis < 60 * 1000)) {
-            const maxRetries = options.maxRetries ?? this.maxRetries;
-            timeoutMillis = this.calculateDefaultRetryTimeoutMillis(retriesRemaining, maxRetries);
-        }
-        await sleep(timeoutMillis);
-        return this.makeRequest(options, retriesRemaining - 1);
-    }
-    calculateDefaultRetryTimeoutMillis(retriesRemaining, maxRetries) {
-        const initialRetryDelay = 0.5;
-        const maxRetryDelay = 8.0;
-        const numRetries = maxRetries - retriesRemaining;
-        // Apply exponential backoff, but not more than the max.
-        const sleepSeconds = Math.min(initialRetryDelay * Math.pow(2, numRetries), maxRetryDelay);
-        // Apply some jitter, take up to at most 25 percent of the retry time.
-        const jitter = 1 - Math.random() * 0.25;
-        return sleepSeconds * jitter * 1000;
-    }
-    getUserAgent() {
-        return `${this.constructor.name}/JS ${VERSION$e}`;
-    }
-}
-class AbstractPage {
-    constructor(client, response, body, options) {
-        _AbstractPage_client.set(this, undefined);
-        __classPrivateFieldSet$3(this, _AbstractPage_client, client, "f");
-        this.options = options;
-        this.response = response;
-        this.body = body;
-    }
-    hasNextPage() {
-        const items = this.getPaginatedItems();
-        if (!items.length)
-            return false;
-        return this.nextPageInfo() != null;
-    }
-    async getNextPage() {
-        const nextInfo = this.nextPageInfo();
-        if (!nextInfo) {
-            throw new OpenAIError('No next page expected; please check `.hasNextPage()` before calling `.getNextPage()`.');
-        }
-        const nextOptions = { ...this.options };
-        if ('params' in nextInfo && typeof nextOptions.query === 'object') {
-            nextOptions.query = { ...nextOptions.query, ...nextInfo.params };
-        }
-        else if ('url' in nextInfo) {
-            const params = [...Object.entries(nextOptions.query || {}), ...nextInfo.url.searchParams.entries()];
-            for (const [key, value] of params) {
-                nextInfo.url.searchParams.set(key, value);
-            }
-            nextOptions.query = undefined;
-            nextOptions.path = nextInfo.url.toString();
-        }
-        return await __classPrivateFieldGet$4(this, _AbstractPage_client, "f").requestAPIList(this.constructor, nextOptions);
-    }
-    async *iterPages() {
-        // eslint-disable-next-line @typescript-eslint/no-this-alias
-        let page = this;
-        yield page;
-        while (page.hasNextPage()) {
-            page = await page.getNextPage();
-            yield page;
-        }
-    }
-    async *[(_AbstractPage_client = new WeakMap(), Symbol.asyncIterator)]() {
-        for await (const page of this.iterPages()) {
-            for (const item of page.getPaginatedItems()) {
-                yield item;
-            }
-        }
-    }
-}
-/**
- * This subclass of Promise will resolve to an instantiated Page once the request completes.
- *
- * It also implements AsyncIterable to allow auto-paginating iteration on an unawaited list call, eg:
- *
- *    for await (const item of client.items.list()) {
- *      console.log(item)
- *    }
- */
-class PagePromise extends APIPromise {
-    constructor(client, request, Page) {
-        super(request, async (props) => new Page(client, props.response, await defaultParseResponse(props), props.options));
-    }
-    /**
-     * Allow auto-paginating iteration on an unawaited list call, eg:
-     *
-     *    for await (const item of client.items.list()) {
-     *      console.log(item)
-     *    }
-     */
-    async *[Symbol.asyncIterator]() {
-        const page = await this;
-        for await (const item of page) {
-            yield item;
-        }
-    }
-}
-const createResponseHeaders = (headers) => {
-    return new Proxy(Object.fromEntries(
-    // @ts-ignore
-    headers.entries()), {
-        get(target, name) {
-            const key = name.toString();
-            return target[key.toLowerCase()] || target[key];
-        },
-    });
-};
-// This is required so that we can determine if a given object matches the RequestOptions
-// type at runtime. While this requires duplication, it is enforced by the TypeScript
-// compiler such that any missing / extraneous keys will cause an error.
-const requestOptionsKeys = {
-    method: true,
-    path: true,
-    query: true,
-    body: true,
-    headers: true,
-    maxRetries: true,
-    stream: true,
-    timeout: true,
-    httpAgent: true,
-    signal: true,
-    idempotencyKey: true,
-    __binaryRequest: true,
-    __binaryResponse: true,
-    __streamClass: true,
-};
-const isRequestOptions = (obj) => {
-    return (typeof obj === 'object' &&
-        obj !== null &&
-        !isEmptyObj(obj) &&
-        Object.keys(obj).every((k) => hasOwn(requestOptionsKeys, k)));
-};
-const getPlatformProperties = () => {
-    if (typeof Deno !== 'undefined' && Deno.build != null) {
-        return {
-            'X-Stainless-Lang': 'js',
-            'X-Stainless-Package-Version': VERSION$e,
-            'X-Stainless-OS': normalizePlatform(Deno.build.os),
-            'X-Stainless-Arch': normalizeArch(Deno.build.arch),
-            'X-Stainless-Runtime': 'deno',
-            'X-Stainless-Runtime-Version': typeof Deno.version === 'string' ? Deno.version : Deno.version?.deno ?? 'unknown',
-        };
-    }
-    if (typeof EdgeRuntime !== 'undefined') {
-        return {
-            'X-Stainless-Lang': 'js',
-            'X-Stainless-Package-Version': VERSION$e,
-            'X-Stainless-OS': 'Unknown',
-            'X-Stainless-Arch': `other:${EdgeRuntime}`,
-            'X-Stainless-Runtime': 'edge',
-            'X-Stainless-Runtime-Version': process.version,
-        };
-    }
-    // Check if Node.js
-    if (Object.prototype.toString.call(typeof process !== 'undefined' ? process : 0) === '[object process]') {
-        return {
-            'X-Stainless-Lang': 'js',
-            'X-Stainless-Package-Version': VERSION$e,
-            'X-Stainless-OS': normalizePlatform(process.platform),
-            'X-Stainless-Arch': normalizeArch(process.arch),
-            'X-Stainless-Runtime': 'node',
-            'X-Stainless-Runtime-Version': process.version,
-        };
-    }
-    const browserInfo = getBrowserInfo();
-    if (browserInfo) {
-        return {
-            'X-Stainless-Lang': 'js',
-            'X-Stainless-Package-Version': VERSION$e,
-            'X-Stainless-OS': 'Unknown',
-            'X-Stainless-Arch': 'unknown',
-            'X-Stainless-Runtime': `browser:${browserInfo.browser}`,
-            'X-Stainless-Runtime-Version': browserInfo.version,
-        };
-    }
-    // TODO add support for Cloudflare workers, etc.
-    return {
-        'X-Stainless-Lang': 'js',
-        'X-Stainless-Package-Version': VERSION$e,
-        'X-Stainless-OS': 'Unknown',
-        'X-Stainless-Arch': 'unknown',
-        'X-Stainless-Runtime': 'unknown',
-        'X-Stainless-Runtime-Version': 'unknown',
-    };
-};
-// Note: modified from https://github.com/JS-DevTools/host-environment/blob/b1ab79ecde37db5d6e163c050e54fe7d287d7c92/src/isomorphic.browser.ts
-function getBrowserInfo() {
-    if (typeof navigator === 'undefined' || !navigator) {
-        return null;
-    }
-    // NOTE: The order matters here!
-    const browserPatterns = [
-        { key: 'edge', pattern: /Edge(?:\W+(\d+)\.(\d+)(?:\.(\d+))?)?/ },
-        { key: 'ie', pattern: /MSIE(?:\W+(\d+)\.(\d+)(?:\.(\d+))?)?/ },
-        { key: 'ie', pattern: /Trident(?:.*rv\:(\d+)\.(\d+)(?:\.(\d+))?)?/ },
-        { key: 'chrome', pattern: /Chrome(?:\W+(\d+)\.(\d+)(?:\.(\d+))?)?/ },
-        { key: 'firefox', pattern: /Firefox(?:\W+(\d+)\.(\d+)(?:\.(\d+))?)?/ },
-        { key: 'safari', pattern: /(?:Version\W+(\d+)\.(\d+)(?:\.(\d+))?)?(?:\W+Mobile\S*)?\W+Safari/ },
-    ];
-    // Find the FIRST matching browser
-    for (const { key, pattern } of browserPatterns) {
-        const match = pattern.exec(navigator.userAgent);
-        if (match) {
-            const major = match[1] || 0;
-            const minor = match[2] || 0;
-            const patch = match[3] || 0;
-            return { browser: key, version: `${major}.${minor}.${patch}` };
-        }
-    }
-    return null;
-}
-const normalizeArch = (arch) => {
-    // Node docs:
-    // - https://nodejs.org/api/process.html#processarch
-    // Deno docs:
-    // - https://doc.deno.land/deno/stable/~/Deno.build
-    if (arch === 'x32')
-        return 'x32';
-    if (arch === 'x86_64' || arch === 'x64')
-        return 'x64';
-    if (arch === 'arm')
-        return 'arm';
-    if (arch === 'aarch64' || arch === 'arm64')
-        return 'arm64';
-    if (arch)
-        return `other:${arch}`;
-    return 'unknown';
-};
-const normalizePlatform = (platform) => {
-    // Node platforms:
-    // - https://nodejs.org/api/process.html#processplatform
-    // Deno platforms:
-    // - https://doc.deno.land/deno/stable/~/Deno.build
-    // - https://github.com/denoland/deno/issues/14799
-    platform = platform.toLowerCase();
-    // NOTE: this iOS check is untested and may not work
-    // Node does not work natively on IOS, there is a fork at
-    // https://github.com/nodejs-mobile/nodejs-mobile
-    // however it is unknown at the time of writing how to detect if it is running
-    if (platform.includes('ios'))
-        return 'iOS';
-    if (platform === 'android')
-        return 'Android';
-    if (platform === 'darwin')
-        return 'MacOS';
-    if (platform === 'win32')
-        return 'Windows';
-    if (platform === 'freebsd')
-        return 'FreeBSD';
-    if (platform === 'openbsd')
-        return 'OpenBSD';
-    if (platform === 'linux')
-        return 'Linux';
-    if (platform)
-        return `Other:${platform}`;
-    return 'Unknown';
-};
-let _platformHeaders;
-const getPlatformHeaders = () => {
-    return (_platformHeaders ?? (_platformHeaders = getPlatformProperties()));
-};
-const safeJSON = (text) => {
-    try {
-        return JSON.parse(text);
-    }
-    catch (err) {
-        return undefined;
-    }
-};
-// https://url.spec.whatwg.org/#url-scheme-string
-const startsWithSchemeRegexp = /^[a-z][a-z0-9+.-]*:/i;
-const isAbsoluteURL = (url) => {
-    return startsWithSchemeRegexp.test(url);
-};
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-const validatePositiveInteger = (name, n) => {
-    if (typeof n !== 'number' || !Number.isInteger(n)) {
-        throw new OpenAIError(`${name} must be an integer`);
-    }
-    if (n < 0) {
-        throw new OpenAIError(`${name} must be a positive integer`);
-    }
-    return n;
-};
-const castToError = (err) => {
-    if (err instanceof Error)
-        return err;
-    if (typeof err === 'object' && err !== null) {
-        try {
-            return new Error(JSON.stringify(err));
-        }
-        catch { }
-    }
-    return new Error(err);
-};
-/**
- * Read an environment variable.
- *
- * Trims beginning and trailing whitespace.
- *
- * Will return undefined if the environment variable doesn't exist or cannot be accessed.
- */
-const readEnv = (env) => {
-    if (typeof process !== 'undefined') {
-        return process.env?.[env]?.trim() ?? undefined;
-    }
-    if (typeof Deno !== 'undefined') {
-        return Deno.env?.get?.(env)?.trim();
-    }
-    return undefined;
-};
-// https://stackoverflow.com/a/34491287
-function isEmptyObj(obj) {
-    if (!obj)
-        return true;
-    for (const _k in obj)
-        return false;
-    return true;
-}
-// https://eslint.org/docs/latest/rules/no-prototype-builtins
-function hasOwn(obj, key) {
-    return Object.prototype.hasOwnProperty.call(obj, key);
-}
-/**
- * Copies headers from "newHeaders" onto "targetHeaders",
- * using lower-case for all properties,
- * ignoring any keys with undefined values,
- * and deleting any keys with null values.
- */
-function applyHeadersMut(targetHeaders, newHeaders) {
-    for (const k in newHeaders) {
-        if (!hasOwn(newHeaders, k))
-            continue;
-        const lowerKey = k.toLowerCase();
-        if (!lowerKey)
-            continue;
-        const val = newHeaders[k];
-        if (val === null) {
-            delete targetHeaders[lowerKey];
-        }
-        else if (val !== undefined) {
-            targetHeaders[lowerKey] = val;
-        }
-    }
-}
-const SENSITIVE_HEADERS = new Set(['authorization', 'api-key']);
-function debug(action, ...args) {
-    if (typeof process !== 'undefined' && process?.env?.['DEBUG'] === 'true') {
-        const modifiedArgs = args.map((arg) => {
-            if (!arg) {
-                return arg;
-            }
-            // Check for sensitive headers in request body 'headers' object
-            if (arg['headers']) {
-                // clone so we don't mutate
-                const modifiedArg = { ...arg, headers: { ...arg['headers'] } };
-                for (const header in arg['headers']) {
-                    if (SENSITIVE_HEADERS.has(header.toLowerCase())) {
-                        modifiedArg['headers'][header] = 'REDACTED';
-                    }
-                }
-                return modifiedArg;
-            }
-            let modifiedArg = null;
-            // Check for sensitive headers in headers object
-            for (const header in arg) {
-                if (SENSITIVE_HEADERS.has(header.toLowerCase())) {
-                    // avoid making a copy until we need to
-                    modifiedArg ?? (modifiedArg = { ...arg });
-                    modifiedArg[header] = 'REDACTED';
-                }
-            }
-            return modifiedArg ?? arg;
-        });
-        console.log(`OpenAI:DEBUG:${action}`, ...modifiedArgs);
-    }
-}
-/**
- * https://stackoverflow.com/a/2117523
- */
-const uuid4 = () => {
-    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
-        const r = (Math.random() * 16) | 0;
-        const v = c === 'x' ? r : (r & 0x3) | 0x8;
-        return v.toString(16);
-    });
-};
-const isRunningInBrowser = () => {
-    return (
-    // @ts-ignore
-    typeof window !== 'undefined' &&
-        // @ts-ignore
-        typeof window.document !== 'undefined' &&
-        // @ts-ignore
-        typeof navigator !== 'undefined');
-};
-const isHeadersProtocol = (headers) => {
-    return typeof headers?.get === 'function';
-};
-const getHeader = (headers, header) => {
-    const lowerCasedHeader = header.toLowerCase();
-    if (isHeadersProtocol(headers)) {
-        // to deal with the case where the header looks like Stainless-Event-Id
-        const intercapsHeader = header[0]?.toUpperCase() +
-            header.substring(1).replace(/([^\w])(\w)/g, (_m, g1, g2) => g1 + g2.toUpperCase());
-        for (const key of [header, lowerCasedHeader, header.toUpperCase(), intercapsHeader]) {
-            const value = headers.get(key);
-            if (value) {
-                return value;
-            }
-        }
-    }
-    for (const [key, value] of Object.entries(headers)) {
-        if (key.toLowerCase() === lowerCasedHeader) {
-            if (Array.isArray(value)) {
-                if (value.length <= 1)
-                    return value[0];
-                console.warn(`Received ${value.length} entries for the ${header} header, using the first entry.`);
-                return value[0];
-            }
-            return value;
-        }
-    }
-    return undefined;
-};
-function isObj(obj) {
-    return obj != null && typeof obj === 'object' && !Array.isArray(obj);
-}
-
-// File generated from our OpenAPI spec by Stainless. See CONTRIBUTING.md for details.
-/**
- * Note: no pagination actually occurs yet, this is for forwards-compatibility.
- */
-class Page extends AbstractPage {
-    constructor(client, response, body, options) {
-        super(client, response, body, options);
-        this.data = body.data || [];
-        this.object = body.object;
-    }
-    getPaginatedItems() {
-        return this.data ?? [];
-    }
-    // @deprecated Please use `nextPageInfo()` instead
-    /**
-     * This page represents a response that isn't actually paginated at the API level
-     * so there will never be any next page params.
-     */
-    nextPageParams() {
-        return null;
-    }
-    nextPageInfo() {
-        return null;
-    }
-}
-class CursorPage extends AbstractPage {
-    constructor(client, response, body, options) {
-        super(client, response, body, options);
-        this.data = body.data || [];
-    }
-    getPaginatedItems() {
-        return this.data ?? [];
-    }
-    // @deprecated Please use `nextPageInfo()` instead
-    nextPageParams() {
-        const info = this.nextPageInfo();
-        if (!info)
-            return null;
-        if ('params' in info)
-            return info.params;
-        const params = Object.fromEntries(info.url.searchParams);
-        if (!Object.keys(params).length)
-            return null;
-        return params;
-    }
-    nextPageInfo() {
-        const data = this.getPaginatedItems();
-        if (!data.length) {
-            return null;
-        }
-        const id = data[data.length - 1]?.id;
-        if (!id) {
-            return null;
-        }
-        return { params: { after: id } };
-    }
-}
-
-// File generated from our OpenAPI spec by Stainless. See CONTRIBUTING.md for details.
-class APIResource {
-    constructor(client) {
-        this._client = client;
-    }
-}
-
-// File generated from our OpenAPI spec by Stainless. See CONTRIBUTING.md for details.
-let Completions$2 = class Completions extends APIResource {
-    create(body, options) {
-        return this._client.post('/chat/completions', { body, ...options, stream: body.stream ?? false });
-    }
-};
-
-// File generated from our OpenAPI spec by Stainless. See CONTRIBUTING.md for details.
-let Chat$2 = class Chat extends APIResource {
-    constructor() {
-        super(...arguments);
-        this.completions = new Completions$2(this._client);
-    }
-};
-Chat$2.Completions = Completions$2;
-
-// File generated from our OpenAPI spec by Stainless. See CONTRIBUTING.md for details.
-class Speech extends APIResource {
-    /**
-     * Generates audio from the input text.
-     */
-    create(body, options) {
-        return this._client.post('/audio/speech', {
-            body,
-            ...options,
-            headers: { Accept: 'application/octet-stream', ...options?.headers },
-            __binaryResponse: true,
-        });
-    }
-}
-
-// File generated from our OpenAPI spec by Stainless. See CONTRIBUTING.md for details.
-class Transcriptions extends APIResource {
-    create(body, options) {
-        return this._client.post('/audio/transcriptions', multipartFormRequestOptions({ body, ...options }));
-    }
-}
-
-// File generated from our OpenAPI spec by Stainless. See CONTRIBUTING.md for details.
-class Translations extends APIResource {
-    create(body, options) {
-        return this._client.post('/audio/translations', multipartFormRequestOptions({ body, ...options }));
-    }
-}
-
-// File generated from our OpenAPI spec by Stainless. See CONTRIBUTING.md for details.
-class Audio extends APIResource {
-    constructor() {
-        super(...arguments);
-        this.transcriptions = new Transcriptions(this._client);
-        this.translations = new Translations(this._client);
-        this.speech = new Speech(this._client);
-    }
-}
-Audio.Transcriptions = Transcriptions;
-Audio.Translations = Translations;
-Audio.Speech = Speech;
-
-// File generated from our OpenAPI spec by Stainless. See CONTRIBUTING.md for details.
-class Batches extends APIResource {
-    /**
-     * Creates and executes a batch from an uploaded file of requests
-     */
-    create(body, options) {
-        return this._client.post('/batches', { body, ...options });
-    }
-    /**
-     * Retrieves a batch.
-     */
-    retrieve(batchId, options) {
-        return this._client.get(`/batches/${batchId}`, options);
-    }
-    list(query = {}, options) {
-        if (isRequestOptions(query)) {
-            return this.list({}, query);
-        }
-        return this._client.getAPIList('/batches', BatchesPage, { query, ...options });
-    }
-    /**
-     * Cancels an in-progress batch. The batch will be in status `cancelling` for up to
-     * 10 minutes, before changing to `cancelled`, where it will have partial results
-     * (if any) available in the output file.
-     */
-    cancel(batchId, options) {
-        return this._client.post(`/batches/${batchId}/cancel`, options);
-    }
-}
-class BatchesPage extends CursorPage {
-}
-Batches.BatchesPage = BatchesPage;
-
-// File generated from our OpenAPI spec by Stainless. See CONTRIBUTING.md for details.
-class Assistants extends APIResource {
-    /**
-     * Create an assistant with a model and instructions.
-     */
-    create(body, options) {
-        return this._client.post('/assistants', {
-            body,
-            ...options,
-            headers: { 'OpenAI-Beta': 'assistants=v2', ...options?.headers },
-        });
-    }
-    /**
-     * Retrieves an assistant.
-     */
-    retrieve(assistantId, options) {
-        return this._client.get(`/assistants/${assistantId}`, {
-            ...options,
-            headers: { 'OpenAI-Beta': 'assistants=v2', ...options?.headers },
-        });
-    }
-    /**
-     * Modifies an assistant.
-     */
-    update(assistantId, body, options) {
-        return this._client.post(`/assistants/${assistantId}`, {
-            body,
-            ...options,
-            headers: { 'OpenAI-Beta': 'assistants=v2', ...options?.headers },
-        });
-    }
-    list(query = {}, options) {
-        if (isRequestOptions(query)) {
-            return this.list({}, query);
-        }
-        return this._client.getAPIList('/assistants', AssistantsPage, {
-            query,
-            ...options,
-            headers: { 'OpenAI-Beta': 'assistants=v2', ...options?.headers },
-        });
-    }
-    /**
-     * Delete an assistant.
-     */
-    del(assistantId, options) {
-        return this._client.delete(`/assistants/${assistantId}`, {
-            ...options,
-            headers: { 'OpenAI-Beta': 'assistants=v2', ...options?.headers },
-        });
-    }
-}
-class AssistantsPage extends CursorPage {
-}
-Assistants.AssistantsPage = AssistantsPage;
-
-function isRunnableFunctionWithParse(fn) {
-    return typeof fn.parse === 'function';
-}
-
-const isAssistantMessage = (message) => {
-    return message?.role === 'assistant';
-};
-const isFunctionMessage = (message) => {
-    return message?.role === 'function';
-};
-const isToolMessage = (message) => {
-    return message?.role === 'tool';
-};
-
-var __classPrivateFieldSet$2 = (undefined && undefined.__classPrivateFieldSet) || function (receiver, state, value, kind, f) {
-    if (kind === "m") throw new TypeError("Private method is not writable");
-    if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a setter");
-    if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot write private member to an object whose class did not declare it");
-    return (kind === "a" ? f.call(receiver, value) : f ? f.value = value : state.set(receiver, value)), value;
-};
-var __classPrivateFieldGet$3 = (undefined && undefined.__classPrivateFieldGet) || function (receiver, state, kind, f) {
-    if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a getter");
-    if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot read private member from an object whose class did not declare it");
-    return kind === "m" ? f : kind === "a" ? f.call(receiver) : f ? f.value : state.get(receiver);
-};
-var _EventStream_instances, _EventStream_connectedPromise, _EventStream_resolveConnectedPromise, _EventStream_rejectConnectedPromise, _EventStream_endPromise, _EventStream_resolveEndPromise, _EventStream_rejectEndPromise, _EventStream_listeners, _EventStream_ended, _EventStream_errored, _EventStream_aborted, _EventStream_catchingPromiseCreated, _EventStream_handleError;
-class EventStream {
-    constructor() {
-        _EventStream_instances.add(this);
-        this.controller = new AbortController();
-        _EventStream_connectedPromise.set(this, undefined);
-        _EventStream_resolveConnectedPromise.set(this, () => { });
-        _EventStream_rejectConnectedPromise.set(this, () => { });
-        _EventStream_endPromise.set(this, undefined);
-        _EventStream_resolveEndPromise.set(this, () => { });
-        _EventStream_rejectEndPromise.set(this, () => { });
-        _EventStream_listeners.set(this, {});
-        _EventStream_ended.set(this, false);
-        _EventStream_errored.set(this, false);
-        _EventStream_aborted.set(this, false);
-        _EventStream_catchingPromiseCreated.set(this, false);
-        __classPrivateFieldSet$2(this, _EventStream_connectedPromise, new Promise((resolve, reject) => {
-            __classPrivateFieldSet$2(this, _EventStream_resolveConnectedPromise, resolve, "f");
-            __classPrivateFieldSet$2(this, _EventStream_rejectConnectedPromise, reject, "f");
-        }), "f");
-        __classPrivateFieldSet$2(this, _EventStream_endPromise, new Promise((resolve, reject) => {
-            __classPrivateFieldSet$2(this, _EventStream_resolveEndPromise, resolve, "f");
-            __classPrivateFieldSet$2(this, _EventStream_rejectEndPromise, reject, "f");
-        }), "f");
-        // Don't let these promises cause unhandled rejection errors.
-        // we will manually cause an unhandled rejection error later
-        // if the user hasn't registered any error listener or called
-        // any promise-returning method.
-        __classPrivateFieldGet$3(this, _EventStream_connectedPromise, "f").catch(() => { });
-        __classPrivateFieldGet$3(this, _EventStream_endPromise, "f").catch(() => { });
-    }
-    _run(executor) {
-        // Unfortunately if we call `executor()` immediately we get runtime errors about
-        // references to `this` before the `super()` constructor call returns.
-        setTimeout(() => {
-            executor().then(() => {
-                this._emitFinal();
-                this._emit('end');
-            }, __classPrivateFieldGet$3(this, _EventStream_instances, "m", _EventStream_handleError).bind(this));
-        }, 0);
-    }
-    _connected() {
-        if (this.ended)
-            return;
-        __classPrivateFieldGet$3(this, _EventStream_resolveConnectedPromise, "f").call(this);
-        this._emit('connect');
-    }
-    get ended() {
-        return __classPrivateFieldGet$3(this, _EventStream_ended, "f");
-    }
-    get errored() {
-        return __classPrivateFieldGet$3(this, _EventStream_errored, "f");
-    }
-    get aborted() {
-        return __classPrivateFieldGet$3(this, _EventStream_aborted, "f");
-    }
-    abort() {
-        this.controller.abort();
-    }
-    /**
-     * Adds the listener function to the end of the listeners array for the event.
-     * No checks are made to see if the listener has already been added. Multiple calls passing
-     * the same combination of event and listener will result in the listener being added, and
-     * called, multiple times.
-     * @returns this ChatCompletionStream, so that calls can be chained
-     */
-    on(event, listener) {
-        const listeners = __classPrivateFieldGet$3(this, _EventStream_listeners, "f")[event] || (__classPrivateFieldGet$3(this, _EventStream_listeners, "f")[event] = []);
-        listeners.push({ listener });
-        return this;
-    }
-    /**
-     * Removes the specified listener from the listener array for the event.
-     * off() will remove, at most, one instance of a listener from the listener array. If any single
-     * listener has been added multiple times to the listener array for the specified event, then
-     * off() must be called multiple times to remove each instance.
-     * @returns this ChatCompletionStream, so that calls can be chained
-     */
-    off(event, listener) {
-        const listeners = __classPrivateFieldGet$3(this, _EventStream_listeners, "f")[event];
-        if (!listeners)
-            return this;
-        const index = listeners.findIndex((l) => l.listener === listener);
-        if (index >= 0)
-            listeners.splice(index, 1);
-        return this;
-    }
-    /**
-     * Adds a one-time listener function for the event. The next time the event is triggered,
-     * this listener is removed and then invoked.
-     * @returns this ChatCompletionStream, so that calls can be chained
-     */
-    once(event, listener) {
-        const listeners = __classPrivateFieldGet$3(this, _EventStream_listeners, "f")[event] || (__classPrivateFieldGet$3(this, _EventStream_listeners, "f")[event] = []);
-        listeners.push({ listener, once: true });
-        return this;
-    }
-    /**
-     * This is similar to `.once()`, but returns a Promise that resolves the next time
-     * the event is triggered, instead of calling a listener callback.
-     * @returns a Promise that resolves the next time given event is triggered,
-     * or rejects if an error is emitted.  (If you request the 'error' event,
-     * returns a promise that resolves with the error).
-     *
-     * Example:
-     *
-     *   const message = await stream.emitted('message') // rejects if the stream errors
-     */
-    emitted(event) {
-        return new Promise((resolve, reject) => {
-            __classPrivateFieldSet$2(this, _EventStream_catchingPromiseCreated, true, "f");
-            if (event !== 'error')
-                this.once('error', reject);
-            this.once(event, resolve);
-        });
-    }
-    async done() {
-        __classPrivateFieldSet$2(this, _EventStream_catchingPromiseCreated, true, "f");
-        await __classPrivateFieldGet$3(this, _EventStream_endPromise, "f");
-    }
-    _emit(event, ...args) {
-        // make sure we don't emit any events after end
-        if (__classPrivateFieldGet$3(this, _EventStream_ended, "f")) {
-            return;
-        }
-        if (event === 'end') {
-            __classPrivateFieldSet$2(this, _EventStream_ended, true, "f");
-            __classPrivateFieldGet$3(this, _EventStream_resolveEndPromise, "f").call(this);
-        }
-        const listeners = __classPrivateFieldGet$3(this, _EventStream_listeners, "f")[event];
-        if (listeners) {
-            __classPrivateFieldGet$3(this, _EventStream_listeners, "f")[event] = listeners.filter((l) => !l.once);
-            listeners.forEach(({ listener }) => listener(...args));
-        }
-        if (event === 'abort') {
-            const error = args[0];
-            if (!__classPrivateFieldGet$3(this, _EventStream_catchingPromiseCreated, "f") && !listeners?.length) {
-                Promise.reject(error);
-            }
-            __classPrivateFieldGet$3(this, _EventStream_rejectConnectedPromise, "f").call(this, error);
-            __classPrivateFieldGet$3(this, _EventStream_rejectEndPromise, "f").call(this, error);
-            this._emit('end');
-            return;
-        }
-        if (event === 'error') {
-            // NOTE: _emit('error', error) should only be called from #handleError().
-            const error = args[0];
-            if (!__classPrivateFieldGet$3(this, _EventStream_catchingPromiseCreated, "f") && !listeners?.length) {
-                // Trigger an unhandled rejection if the user hasn't registered any error handlers.
-                // If you are seeing stack traces here, make sure to handle errors via either:
-                // - runner.on('error', () => ...)
-                // - await runner.done()
-                // - await runner.finalChatCompletion()
-                // - etc.
-                Promise.reject(error);
-            }
-            __classPrivateFieldGet$3(this, _EventStream_rejectConnectedPromise, "f").call(this, error);
-            __classPrivateFieldGet$3(this, _EventStream_rejectEndPromise, "f").call(this, error);
-            this._emit('end');
-        }
-    }
-    _emitFinal() { }
-}
-_EventStream_connectedPromise = new WeakMap(), _EventStream_resolveConnectedPromise = new WeakMap(), _EventStream_rejectConnectedPromise = new WeakMap(), _EventStream_endPromise = new WeakMap(), _EventStream_resolveEndPromise = new WeakMap(), _EventStream_rejectEndPromise = new WeakMap(), _EventStream_listeners = new WeakMap(), _EventStream_ended = new WeakMap(), _EventStream_errored = new WeakMap(), _EventStream_aborted = new WeakMap(), _EventStream_catchingPromiseCreated = new WeakMap(), _EventStream_instances = new WeakSet(), _EventStream_handleError = function _EventStream_handleError(error) {
-    __classPrivateFieldSet$2(this, _EventStream_errored, true, "f");
-    if (error instanceof Error && error.name === 'AbortError') {
-        error = new APIUserAbortError();
-    }
-    if (error instanceof APIUserAbortError) {
-        __classPrivateFieldSet$2(this, _EventStream_aborted, true, "f");
-        return this._emit('abort', error);
-    }
-    if (error instanceof OpenAIError) {
-        return this._emit('error', error);
-    }
-    if (error instanceof Error) {
-        const openAIError = new OpenAIError(error.message);
-        // @ts-ignore
-        openAIError.cause = error;
-        return this._emit('error', openAIError);
-    }
-    return this._emit('error', new OpenAIError(String(error)));
-};
-
-function isAutoParsableResponseFormat(response_format) {
-    return response_format?.['$brand'] === 'auto-parseable-response-format';
-}
-function isAutoParsableTool(tool) {
-    return tool?.['$brand'] === 'auto-parseable-tool';
-}
-function maybeParseChatCompletion(completion, params) {
-    if (!params || !hasAutoParseableInput(params)) {
-        return {
-            ...completion,
-            choices: completion.choices.map((choice) => ({
-                ...choice,
-                message: { ...choice.message, parsed: null, tool_calls: choice.message.tool_calls ?? [] },
-            })),
-        };
-    }
-    return parseChatCompletion(completion, params);
-}
-function parseChatCompletion(completion, params) {
-    const choices = completion.choices.map((choice) => {
-        if (choice.finish_reason === 'length') {
-            throw new LengthFinishReasonError();
-        }
-        if (choice.finish_reason === 'content_filter') {
-            throw new ContentFilterFinishReasonError();
-        }
-        return {
-            ...choice,
-            message: {
-                ...choice.message,
-                tool_calls: choice.message.tool_calls?.map((toolCall) => parseToolCall(params, toolCall)) ?? [],
-                parsed: choice.message.content && !choice.message.refusal ?
-                    parseResponseFormat(params, choice.message.content)
-                    : null,
-            },
-        };
-    });
-    return { ...completion, choices };
-}
-function parseResponseFormat(params, content) {
-    if (params.response_format?.type !== 'json_schema') {
-        return null;
-    }
-    if (params.response_format?.type === 'json_schema') {
-        if ('$parseRaw' in params.response_format) {
-            const response_format = params.response_format;
-            return response_format.$parseRaw(content);
-        }
-        return JSON.parse(content);
-    }
-    return null;
-}
-function parseToolCall(params, toolCall) {
-    const inputTool = params.tools?.find((inputTool) => inputTool.function?.name === toolCall.function.name);
-    return {
-        ...toolCall,
-        function: {
-            ...toolCall.function,
-            parsed_arguments: isAutoParsableTool(inputTool) ? inputTool.$parseRaw(toolCall.function.arguments)
-                : inputTool?.function.strict ? JSON.parse(toolCall.function.arguments)
-                    : null,
-        },
-    };
-}
-function shouldParseToolCall(params, toolCall) {
-    if (!params) {
-        return false;
-    }
-    const inputTool = params.tools?.find((inputTool) => inputTool.function?.name === toolCall.function.name);
-    return isAutoParsableTool(inputTool) || inputTool?.function.strict || false;
-}
-function hasAutoParseableInput(params) {
-    if (isAutoParsableResponseFormat(params.response_format)) {
-        return true;
-    }
-    return (params.tools?.some((t) => isAutoParsableTool(t) || (t.type === 'function' && t.function.strict === true)) ?? false);
-}
-function validateInputTools(tools) {
-    for (const tool of tools ?? []) {
-        if (tool.type !== 'function') {
-            throw new OpenAIError(`Currently only \`function\` tool types support auto-parsing; Received \`${tool.type}\``);
-        }
-        if (tool.function.strict !== true) {
-            throw new OpenAIError(`The \`${tool.function.name}\` tool is not marked with \`strict: true\`. Only strict function tools can be auto-parsed`);
-        }
-    }
-}
-
-var __classPrivateFieldGet$2 = (undefined && undefined.__classPrivateFieldGet) || function (receiver, state, kind, f) {
-    if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a getter");
-    if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot read private member from an object whose class did not declare it");
-    return kind === "m" ? f : kind === "a" ? f.call(receiver) : f ? f.value : state.get(receiver);
-};
-var _AbstractChatCompletionRunner_instances, _AbstractChatCompletionRunner_getFinalContent, _AbstractChatCompletionRunner_getFinalMessage, _AbstractChatCompletionRunner_getFinalFunctionCall, _AbstractChatCompletionRunner_getFinalFunctionCallResult, _AbstractChatCompletionRunner_calculateTotalUsage, _AbstractChatCompletionRunner_validateParams, _AbstractChatCompletionRunner_stringifyFunctionCallResult;
-const DEFAULT_MAX_CHAT_COMPLETIONS = 10;
-class AbstractChatCompletionRunner extends EventStream {
-    constructor() {
-        super(...arguments);
-        _AbstractChatCompletionRunner_instances.add(this);
-        this._chatCompletions = [];
-        this.messages = [];
-    }
-    _addChatCompletion(chatCompletion) {
-        this._chatCompletions.push(chatCompletion);
-        this._emit('chatCompletion', chatCompletion);
-        const message = chatCompletion.choices[0]?.message;
-        if (message)
-            this._addMessage(message);
-        return chatCompletion;
-    }
-    _addMessage(message, emit = true) {
-        if (!('content' in message))
-            message.content = null;
-        this.messages.push(message);
-        if (emit) {
-            this._emit('message', message);
-            if ((isFunctionMessage(message) || isToolMessage(message)) && message.content) {
-                // Note, this assumes that {role: 'tool', content: …} is always the result of a call of tool of type=function.
-                this._emit('functionCallResult', message.content);
-            }
-            else if (isAssistantMessage(message) && message.function_call) {
-                this._emit('functionCall', message.function_call);
-            }
-            else if (isAssistantMessage(message) && message.tool_calls) {
-                for (const tool_call of message.tool_calls) {
-                    if (tool_call.type === 'function') {
-                        this._emit('functionCall', tool_call.function);
-                    }
-                }
-            }
-        }
-    }
-    /**
-     * @returns a promise that resolves with the final ChatCompletion, or rejects
-     * if an error occurred or the stream ended prematurely without producing a ChatCompletion.
-     */
-    async finalChatCompletion() {
-        await this.done();
-        const completion = this._chatCompletions[this._chatCompletions.length - 1];
-        if (!completion)
-            throw new OpenAIError('stream ended without producing a ChatCompletion');
-        return completion;
-    }
-    /**
-     * @returns a promise that resolves with the content of the final ChatCompletionMessage, or rejects
-     * if an error occurred or the stream ended prematurely without producing a ChatCompletionMessage.
-     */
-    async finalContent() {
-        await this.done();
-        return __classPrivateFieldGet$2(this, _AbstractChatCompletionRunner_instances, "m", _AbstractChatCompletionRunner_getFinalContent).call(this);
-    }
-    /**
-     * @returns a promise that resolves with the the final assistant ChatCompletionMessage response,
-     * or rejects if an error occurred or the stream ended prematurely without producing a ChatCompletionMessage.
-     */
-    async finalMessage() {
-        await this.done();
-        return __classPrivateFieldGet$2(this, _AbstractChatCompletionRunner_instances, "m", _AbstractChatCompletionRunner_getFinalMessage).call(this);
-    }
-    /**
-     * @returns a promise that resolves with the content of the final FunctionCall, or rejects
-     * if an error occurred or the stream ended prematurely without producing a ChatCompletionMessage.
-     */
-    async finalFunctionCall() {
-        await this.done();
-        return __classPrivateFieldGet$2(this, _AbstractChatCompletionRunner_instances, "m", _AbstractChatCompletionRunner_getFinalFunctionCall).call(this);
-    }
-    async finalFunctionCallResult() {
-        await this.done();
-        return __classPrivateFieldGet$2(this, _AbstractChatCompletionRunner_instances, "m", _AbstractChatCompletionRunner_getFinalFunctionCallResult).call(this);
-    }
-    async totalUsage() {
-        await this.done();
-        return __classPrivateFieldGet$2(this, _AbstractChatCompletionRunner_instances, "m", _AbstractChatCompletionRunner_calculateTotalUsage).call(this);
-    }
-    allChatCompletions() {
-        return [...this._chatCompletions];
-    }
-    _emitFinal() {
-        const completion = this._chatCompletions[this._chatCompletions.length - 1];
-        if (completion)
-            this._emit('finalChatCompletion', completion);
-        const finalMessage = __classPrivateFieldGet$2(this, _AbstractChatCompletionRunner_instances, "m", _AbstractChatCompletionRunner_getFinalMessage).call(this);
-        if (finalMessage)
-            this._emit('finalMessage', finalMessage);
-        const finalContent = __classPrivateFieldGet$2(this, _AbstractChatCompletionRunner_instances, "m", _AbstractChatCompletionRunner_getFinalContent).call(this);
-        if (finalContent)
-            this._emit('finalContent', finalContent);
-        const finalFunctionCall = __classPrivateFieldGet$2(this, _AbstractChatCompletionRunner_instances, "m", _AbstractChatCompletionRunner_getFinalFunctionCall).call(this);
-        if (finalFunctionCall)
-            this._emit('finalFunctionCall', finalFunctionCall);
-        const finalFunctionCallResult = __classPrivateFieldGet$2(this, _AbstractChatCompletionRunner_instances, "m", _AbstractChatCompletionRunner_getFinalFunctionCallResult).call(this);
-        if (finalFunctionCallResult != null)
-            this._emit('finalFunctionCallResult', finalFunctionCallResult);
-        if (this._chatCompletions.some((c) => c.usage)) {
-            this._emit('totalUsage', __classPrivateFieldGet$2(this, _AbstractChatCompletionRunner_instances, "m", _AbstractChatCompletionRunner_calculateTotalUsage).call(this));
-        }
-    }
-    async _createChatCompletion(client, params, options) {
-        const signal = options?.signal;
-        if (signal) {
-            if (signal.aborted)
-                this.controller.abort();
-            signal.addEventListener('abort', () => this.controller.abort());
-        }
-        __classPrivateFieldGet$2(this, _AbstractChatCompletionRunner_instances, "m", _AbstractChatCompletionRunner_validateParams).call(this, params);
-        const chatCompletion = await client.chat.completions.create({ ...params, stream: false }, { ...options, signal: this.controller.signal });
-        this._connected();
-        return this._addChatCompletion(parseChatCompletion(chatCompletion, params));
-    }
-    async _runChatCompletion(client, params, options) {
-        for (const message of params.messages) {
-            this._addMessage(message, false);
-        }
-        return await this._createChatCompletion(client, params, options);
-    }
-    async _runFunctions(client, params, options) {
-        const role = 'function';
-        const { function_call = 'auto', stream, ...restParams } = params;
-        const singleFunctionToCall = typeof function_call !== 'string' && function_call?.name;
-        const { maxChatCompletions = DEFAULT_MAX_CHAT_COMPLETIONS } = options || {};
-        const functionsByName = {};
-        for (const f of params.functions) {
-            functionsByName[f.name || f.function.name] = f;
-        }
-        const functions = params.functions.map((f) => ({
-            name: f.name || f.function.name,
-            parameters: f.parameters,
-            description: f.description,
-        }));
-        for (const message of params.messages) {
-            this._addMessage(message, false);
-        }
-        for (let i = 0; i < maxChatCompletions; ++i) {
-            const chatCompletion = await this._createChatCompletion(client, {
-                ...restParams,
-                function_call,
-                functions,
-                messages: [...this.messages],
-            }, options);
-            const message = chatCompletion.choices[0]?.message;
-            if (!message) {
-                throw new OpenAIError(`missing message in ChatCompletion response`);
-            }
-            if (!message.function_call)
-                return;
-            const { name, arguments: args } = message.function_call;
-            const fn = functionsByName[name];
-            if (!fn) {
-                const content = `Invalid function_call: ${JSON.stringify(name)}. Available options are: ${functions
-                    .map((f) => JSON.stringify(f.name))
-                    .join(', ')}. Please try again`;
-                this._addMessage({ role, name, content });
-                continue;
-            }
-            else if (singleFunctionToCall && singleFunctionToCall !== name) {
-                const content = `Invalid function_call: ${JSON.stringify(name)}. ${JSON.stringify(singleFunctionToCall)} requested. Please try again`;
-                this._addMessage({ role, name, content });
-                continue;
-            }
-            let parsed;
-            try {
-                parsed = isRunnableFunctionWithParse(fn) ? await fn.parse(args) : args;
-            }
-            catch (error) {
-                this._addMessage({
-                    role,
-                    name,
-                    content: error instanceof Error ? error.message : String(error),
-                });
-                continue;
-            }
-            // @ts-expect-error it can't rule out `never` type.
-            const rawContent = await fn.function(parsed, this);
-            const content = __classPrivateFieldGet$2(this, _AbstractChatCompletionRunner_instances, "m", _AbstractChatCompletionRunner_stringifyFunctionCallResult).call(this, rawContent);
-            this._addMessage({ role, name, content });
-            if (singleFunctionToCall)
-                return;
-        }
-    }
-    async _runTools(client, params, options) {
-        const role = 'tool';
-        const { tool_choice = 'auto', stream, ...restParams } = params;
-        const singleFunctionToCall = typeof tool_choice !== 'string' && tool_choice?.function?.name;
-        const { maxChatCompletions = DEFAULT_MAX_CHAT_COMPLETIONS } = options || {};
-        // TODO(someday): clean this logic up
-        const inputTools = params.tools.map((tool) => {
-            if (isAutoParsableTool(tool)) {
-                if (!tool.$callback) {
-                    throw new OpenAIError('Tool given to `.runTools()` that does not have an associated function');
-                }
-                return {
-                    type: 'function',
-                    function: {
-                        function: tool.$callback,
-                        name: tool.function.name,
-                        description: tool.function.description || '',
-                        parameters: tool.function.parameters,
-                        parse: tool.$parseRaw,
-                        strict: true,
-                    },
-                };
-            }
-            return tool;
-        });
-        const functionsByName = {};
-        for (const f of inputTools) {
-            if (f.type === 'function') {
-                functionsByName[f.function.name || f.function.function.name] = f.function;
-            }
-        }
-        const tools = 'tools' in params ?
-            inputTools.map((t) => t.type === 'function' ?
-                {
-                    type: 'function',
-                    function: {
-                        name: t.function.name || t.function.function.name,
-                        parameters: t.function.parameters,
-                        description: t.function.description,
-                        strict: t.function.strict,
-                    },
-                }
-                : t)
-            : undefined;
-        for (const message of params.messages) {
-            this._addMessage(message, false);
-        }
-        for (let i = 0; i < maxChatCompletions; ++i) {
-            const chatCompletion = await this._createChatCompletion(client, {
-                ...restParams,
-                tool_choice,
-                tools,
-                messages: [...this.messages],
-            }, options);
-            const message = chatCompletion.choices[0]?.message;
-            if (!message) {
-                throw new OpenAIError(`missing message in ChatCompletion response`);
-            }
-            if (!message.tool_calls?.length) {
-                return;
-            }
-            for (const tool_call of message.tool_calls) {
-                if (tool_call.type !== 'function')
-                    continue;
-                const tool_call_id = tool_call.id;
-                const { name, arguments: args } = tool_call.function;
-                const fn = functionsByName[name];
-                if (!fn) {
-                    const content = `Invalid tool_call: ${JSON.stringify(name)}. Available options are: ${Object.keys(functionsByName)
-                        .map((name) => JSON.stringify(name))
-                        .join(', ')}. Please try again`;
-                    this._addMessage({ role, tool_call_id, content });
-                    continue;
-                }
-                else if (singleFunctionToCall && singleFunctionToCall !== name) {
-                    const content = `Invalid tool_call: ${JSON.stringify(name)}. ${JSON.stringify(singleFunctionToCall)} requested. Please try again`;
-                    this._addMessage({ role, tool_call_id, content });
-                    continue;
-                }
-                let parsed;
-                try {
-                    parsed = isRunnableFunctionWithParse(fn) ? await fn.parse(args) : args;
-                }
-                catch (error) {
-                    const content = error instanceof Error ? error.message : String(error);
-                    this._addMessage({ role, tool_call_id, content });
-                    continue;
-                }
-                // @ts-expect-error it can't rule out `never` type.
-                const rawContent = await fn.function(parsed, this);
-                const content = __classPrivateFieldGet$2(this, _AbstractChatCompletionRunner_instances, "m", _AbstractChatCompletionRunner_stringifyFunctionCallResult).call(this, rawContent);
-                this._addMessage({ role, tool_call_id, content });
-                if (singleFunctionToCall) {
-                    return;
-                }
-            }
-        }
-        return;
-    }
-}
-_AbstractChatCompletionRunner_instances = new WeakSet(), _AbstractChatCompletionRunner_getFinalContent = function _AbstractChatCompletionRunner_getFinalContent() {
-    return __classPrivateFieldGet$2(this, _AbstractChatCompletionRunner_instances, "m", _AbstractChatCompletionRunner_getFinalMessage).call(this).content ?? null;
-}, _AbstractChatCompletionRunner_getFinalMessage = function _AbstractChatCompletionRunner_getFinalMessage() {
-    let i = this.messages.length;
-    while (i-- > 0) {
-        const message = this.messages[i];
-        if (isAssistantMessage(message)) {
-            const { function_call, ...rest } = message;
-            // TODO: support audio here
-            const ret = {
-                ...rest,
-                content: message.content ?? null,
-                refusal: message.refusal ?? null,
-            };
-            if (function_call) {
-                ret.function_call = function_call;
-            }
-            return ret;
-        }
-    }
-    throw new OpenAIError('stream ended without producing a ChatCompletionMessage with role=assistant');
-}, _AbstractChatCompletionRunner_getFinalFunctionCall = function _AbstractChatCompletionRunner_getFinalFunctionCall() {
-    for (let i = this.messages.length - 1; i >= 0; i--) {
-        const message = this.messages[i];
-        if (isAssistantMessage(message) && message?.function_call) {
-            return message.function_call;
-        }
-        if (isAssistantMessage(message) && message?.tool_calls?.length) {
-            return message.tool_calls.at(-1)?.function;
-        }
-    }
-    return;
-}, _AbstractChatCompletionRunner_getFinalFunctionCallResult = function _AbstractChatCompletionRunner_getFinalFunctionCallResult() {
-    for (let i = this.messages.length - 1; i >= 0; i--) {
-        const message = this.messages[i];
-        if (isFunctionMessage(message) && message.content != null) {
-            return message.content;
-        }
-        if (isToolMessage(message) &&
-            message.content != null &&
-            typeof message.content === 'string' &&
-            this.messages.some((x) => x.role === 'assistant' &&
-                x.tool_calls?.some((y) => y.type === 'function' && y.id === message.tool_call_id))) {
-            return message.content;
-        }
-    }
-    return;
-}, _AbstractChatCompletionRunner_calculateTotalUsage = function _AbstractChatCompletionRunner_calculateTotalUsage() {
-    const total = {
-        completion_tokens: 0,
-        prompt_tokens: 0,
-        total_tokens: 0,
-    };
-    for (const { usage } of this._chatCompletions) {
-        if (usage) {
-            total.completion_tokens += usage.completion_tokens;
-            total.prompt_tokens += usage.prompt_tokens;
-            total.total_tokens += usage.total_tokens;
-        }
-    }
-    return total;
-}, _AbstractChatCompletionRunner_validateParams = function _AbstractChatCompletionRunner_validateParams(params) {
-    if (params.n != null && params.n > 1) {
-        throw new OpenAIError('ChatCompletion convenience helpers only support n=1 at this time. To use n>1, please use chat.completions.create() directly.');
-    }
-}, _AbstractChatCompletionRunner_stringifyFunctionCallResult = function _AbstractChatCompletionRunner_stringifyFunctionCallResult(rawContent) {
-    return (typeof rawContent === 'string' ? rawContent
-        : rawContent === undefined ? 'undefined'
-            : JSON.stringify(rawContent));
-};
-
-class ChatCompletionRunner extends AbstractChatCompletionRunner {
-    /** @deprecated - please use `runTools` instead. */
-    static runFunctions(client, params, options) {
-        const runner = new ChatCompletionRunner();
-        const opts = {
-            ...options,
-            headers: { ...options?.headers, 'X-Stainless-Helper-Method': 'runFunctions' },
-        };
-        runner._run(() => runner._runFunctions(client, params, opts));
-        return runner;
-    }
-    static runTools(client, params, options) {
-        const runner = new ChatCompletionRunner();
-        const opts = {
-            ...options,
-            headers: { ...options?.headers, 'X-Stainless-Helper-Method': 'runTools' },
-        };
-        runner._run(() => runner._runTools(client, params, opts));
-        return runner;
-    }
-    _addMessage(message, emit = true) {
-        super._addMessage(message, emit);
-        if (isAssistantMessage(message) && message.content) {
-            this._emit('content', message.content);
-        }
-    }
-}
-
-const STR = 0b000000001;
-const NUM = 0b000000010;
-const ARR = 0b000000100;
-const OBJ = 0b000001000;
-const NULL = 0b000010000;
-const BOOL = 0b000100000;
-const NAN = 0b001000000;
-const INFINITY = 0b010000000;
-const MINUS_INFINITY = 0b100000000;
-const INF = INFINITY | MINUS_INFINITY;
-const SPECIAL = NULL | BOOL | INF | NAN;
-const ATOM = STR | NUM | SPECIAL;
-const COLLECTION = ARR | OBJ;
-const ALL = ATOM | COLLECTION;
-const Allow = {
-    STR,
-    NUM,
-    ARR,
-    OBJ,
-    NULL,
-    BOOL,
-    NAN,
-    INFINITY,
-    MINUS_INFINITY,
-    INF,
-    SPECIAL,
-    ATOM,
-    COLLECTION,
-    ALL,
-};
-// The JSON string segment was unable to be parsed completely
-class PartialJSON extends Error {
-}
-class MalformedJSON extends Error {
-}
-/**
- * Parse incomplete JSON
- * @param {string} jsonString Partial JSON to be parsed
- * @param {number} allowPartial Specify what types are allowed to be partial, see {@link Allow} for details
- * @returns The parsed JSON
- * @throws {PartialJSON} If the JSON is incomplete (related to the `allow` parameter)
- * @throws {MalformedJSON} If the JSON is malformed
- */
-function parseJSON(jsonString, allowPartial = Allow.ALL) {
-    if (typeof jsonString !== 'string') {
-        throw new TypeError(`expecting str, got ${typeof jsonString}`);
-    }
-    if (!jsonString.trim()) {
-        throw new Error(`${jsonString} is empty`);
-    }
-    return _parseJSON(jsonString.trim(), allowPartial);
-}
-const _parseJSON = (jsonString, allow) => {
-    const length = jsonString.length;
-    let index = 0;
-    const markPartialJSON = (msg) => {
-        throw new PartialJSON(`${msg} at position ${index}`);
-    };
-    const throwMalformedError = (msg) => {
-        throw new MalformedJSON(`${msg} at position ${index}`);
-    };
-    const parseAny = () => {
-        skipBlank();
-        if (index >= length)
-            markPartialJSON('Unexpected end of input');
-        if (jsonString[index] === '"')
-            return parseStr();
-        if (jsonString[index] === '{')
-            return parseObj();
-        if (jsonString[index] === '[')
-            return parseArr();
-        if (jsonString.substring(index, index + 4) === 'null' ||
-            (Allow.NULL & allow && length - index < 4 && 'null'.startsWith(jsonString.substring(index)))) {
-            index += 4;
-            return null;
-        }
-        if (jsonString.substring(index, index + 4) === 'true' ||
-            (Allow.BOOL & allow && length - index < 4 && 'true'.startsWith(jsonString.substring(index)))) {
-            index += 4;
-            return true;
-        }
-        if (jsonString.substring(index, index + 5) === 'false' ||
-            (Allow.BOOL & allow && length - index < 5 && 'false'.startsWith(jsonString.substring(index)))) {
-            index += 5;
-            return false;
-        }
-        if (jsonString.substring(index, index + 8) === 'Infinity' ||
-            (Allow.INFINITY & allow && length - index < 8 && 'Infinity'.startsWith(jsonString.substring(index)))) {
-            index += 8;
-            return Infinity;
-        }
-        if (jsonString.substring(index, index + 9) === '-Infinity' ||
-            (Allow.MINUS_INFINITY & allow &&
-                1 < length - index &&
-                length - index < 9 &&
-                '-Infinity'.startsWith(jsonString.substring(index)))) {
-            index += 9;
-            return -Infinity;
-        }
-        if (jsonString.substring(index, index + 3) === 'NaN' ||
-            (Allow.NAN & allow && length - index < 3 && 'NaN'.startsWith(jsonString.substring(index)))) {
-            index += 3;
-            return NaN;
-        }
-        return parseNum();
-    };
-    const parseStr = () => {
-        const start = index;
-        let escape = false;
-        index++; // skip initial quote
-        while (index < length && (jsonString[index] !== '"' || (escape && jsonString[index - 1] === '\\'))) {
-            escape = jsonString[index] === '\\' ? !escape : false;
-            index++;
-        }
-        if (jsonString.charAt(index) == '"') {
-            try {
-                return JSON.parse(jsonString.substring(start, ++index - Number(escape)));
-            }
-            catch (e) {
-                throwMalformedError(String(e));
-            }
-        }
-        else if (Allow.STR & allow) {
-            try {
-                return JSON.parse(jsonString.substring(start, index - Number(escape)) + '"');
-            }
-            catch (e) {
-                // SyntaxError: Invalid escape sequence
-                return JSON.parse(jsonString.substring(start, jsonString.lastIndexOf('\\')) + '"');
-            }
-        }
-        markPartialJSON('Unterminated string literal');
-    };
-    const parseObj = () => {
-        index++; // skip initial brace
-        skipBlank();
-        const obj = {};
-        try {
-            while (jsonString[index] !== '}') {
-                skipBlank();
-                if (index >= length && Allow.OBJ & allow)
-                    return obj;
-                const key = parseStr();
-                skipBlank();
-                index++; // skip colon
-                try {
-                    const value = parseAny();
-                    Object.defineProperty(obj, key, { value, writable: true, enumerable: true, configurable: true });
-                }
-                catch (e) {
-                    if (Allow.OBJ & allow)
-                        return obj;
-                    else
-                        throw e;
-                }
-                skipBlank();
-                if (jsonString[index] === ',')
-                    index++; // skip comma
-            }
-        }
-        catch (e) {
-            if (Allow.OBJ & allow)
-                return obj;
-            else
-                markPartialJSON("Expected '}' at end of object");
-        }
-        index++; // skip final brace
-        return obj;
-    };
-    const parseArr = () => {
-        index++; // skip initial bracket
-        const arr = [];
-        try {
-            while (jsonString[index] !== ']') {
-                arr.push(parseAny());
-                skipBlank();
-                if (jsonString[index] === ',') {
-                    index++; // skip comma
-                }
-            }
-        }
-        catch (e) {
-            if (Allow.ARR & allow) {
-                return arr;
-            }
-            markPartialJSON("Expected ']' at end of array");
-        }
-        index++; // skip final bracket
-        return arr;
-    };
-    const parseNum = () => {
-        if (index === 0) {
-            if (jsonString === '-' && Allow.NUM & allow)
-                markPartialJSON("Not sure what '-' is");
-            try {
-                return JSON.parse(jsonString);
-            }
-            catch (e) {
-                if (Allow.NUM & allow) {
-                    try {
-                        if ('.' === jsonString[jsonString.length - 1])
-                            return JSON.parse(jsonString.substring(0, jsonString.lastIndexOf('.')));
-                        return JSON.parse(jsonString.substring(0, jsonString.lastIndexOf('e')));
-                    }
-                    catch (e) { }
-                }
-                throwMalformedError(String(e));
-            }
-        }
-        const start = index;
-        if (jsonString[index] === '-')
-            index++;
-        while (jsonString[index] && !',]}'.includes(jsonString[index]))
-            index++;
-        if (index == length && !(Allow.NUM & allow))
-            markPartialJSON('Unterminated number literal');
-        try {
-            return JSON.parse(jsonString.substring(start, index));
-        }
-        catch (e) {
-            if (jsonString.substring(start, index) === '-' && Allow.NUM & allow)
-                markPartialJSON("Not sure what '-' is");
-            try {
-                return JSON.parse(jsonString.substring(start, jsonString.lastIndexOf('e')));
-            }
-            catch (e) {
-                throwMalformedError(String(e));
-            }
-        }
-    };
-    const skipBlank = () => {
-        while (index < length && ' \n\r\t'.includes(jsonString[index])) {
-            index++;
-        }
-    };
-    return parseAny();
-};
-// using this function with malformed JSON is undefined behavior
-const partialParse = (input) => parseJSON(input, Allow.ALL ^ Allow.NUM);
-
-var __classPrivateFieldSet$1 = (undefined && undefined.__classPrivateFieldSet) || function (receiver, state, value, kind, f) {
-    if (kind === "m") throw new TypeError("Private method is not writable");
-    if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a setter");
-    if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot write private member to an object whose class did not declare it");
-    return (kind === "a" ? f.call(receiver, value) : f ? f.value = value : state.set(receiver, value)), value;
-};
-var __classPrivateFieldGet$1 = (undefined && undefined.__classPrivateFieldGet) || function (receiver, state, kind, f) {
-    if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a getter");
-    if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot read private member from an object whose class did not declare it");
-    return kind === "m" ? f : kind === "a" ? f.call(receiver) : f ? f.value : state.get(receiver);
-};
-var _ChatCompletionStream_instances, _ChatCompletionStream_params, _ChatCompletionStream_choiceEventStates, _ChatCompletionStream_currentChatCompletionSnapshot, _ChatCompletionStream_beginRequest, _ChatCompletionStream_getChoiceEventState, _ChatCompletionStream_addChunk, _ChatCompletionStream_emitToolCallDoneEvent, _ChatCompletionStream_emitContentDoneEvents, _ChatCompletionStream_endRequest, _ChatCompletionStream_getAutoParseableResponseFormat, _ChatCompletionStream_accumulateChatCompletion;
-class ChatCompletionStream extends AbstractChatCompletionRunner {
-    constructor(params) {
-        super();
-        _ChatCompletionStream_instances.add(this);
-        _ChatCompletionStream_params.set(this, undefined);
-        _ChatCompletionStream_choiceEventStates.set(this, undefined);
-        _ChatCompletionStream_currentChatCompletionSnapshot.set(this, undefined);
-        __classPrivateFieldSet$1(this, _ChatCompletionStream_params, params, "f");
-        __classPrivateFieldSet$1(this, _ChatCompletionStream_choiceEventStates, [], "f");
-    }
-    get currentChatCompletionSnapshot() {
-        return __classPrivateFieldGet$1(this, _ChatCompletionStream_currentChatCompletionSnapshot, "f");
-    }
-    /**
-     * Intended for use on the frontend, consuming a stream produced with
-     * `.toReadableStream()` on the backend.
-     *
-     * Note that messages sent to the model do not appear in `.on('message')`
-     * in this context.
-     */
-    static fromReadableStream(stream) {
-        const runner = new ChatCompletionStream(null);
-        runner._run(() => runner._fromReadableStream(stream));
-        return runner;
-    }
-    static createChatCompletion(client, params, options) {
-        const runner = new ChatCompletionStream(params);
-        runner._run(() => runner._runChatCompletion(client, { ...params, stream: true }, { ...options, headers: { ...options?.headers, 'X-Stainless-Helper-Method': 'stream' } }));
-        return runner;
-    }
-    async _createChatCompletion(client, params, options) {
-        super._createChatCompletion;
-        const signal = options?.signal;
-        if (signal) {
-            if (signal.aborted)
-                this.controller.abort();
-            signal.addEventListener('abort', () => this.controller.abort());
-        }
-        __classPrivateFieldGet$1(this, _ChatCompletionStream_instances, "m", _ChatCompletionStream_beginRequest).call(this);
-        const stream = await client.chat.completions.create({ ...params, stream: true }, { ...options, signal: this.controller.signal });
-        this._connected();
-        for await (const chunk of stream) {
-            __classPrivateFieldGet$1(this, _ChatCompletionStream_instances, "m", _ChatCompletionStream_addChunk).call(this, chunk);
-        }
-        if (stream.controller.signal?.aborted) {
-            throw new APIUserAbortError();
-        }
-        return this._addChatCompletion(__classPrivateFieldGet$1(this, _ChatCompletionStream_instances, "m", _ChatCompletionStream_endRequest).call(this));
-    }
-    async _fromReadableStream(readableStream, options) {
-        const signal = options?.signal;
-        if (signal) {
-            if (signal.aborted)
-                this.controller.abort();
-            signal.addEventListener('abort', () => this.controller.abort());
-        }
-        __classPrivateFieldGet$1(this, _ChatCompletionStream_instances, "m", _ChatCompletionStream_beginRequest).call(this);
-        this._connected();
-        const stream = Stream.fromReadableStream(readableStream, this.controller);
-        let chatId;
-        for await (const chunk of stream) {
-            if (chatId && chatId !== chunk.id) {
-                // A new request has been made.
-                this._addChatCompletion(__classPrivateFieldGet$1(this, _ChatCompletionStream_instances, "m", _ChatCompletionStream_endRequest).call(this));
-            }
-            __classPrivateFieldGet$1(this, _ChatCompletionStream_instances, "m", _ChatCompletionStream_addChunk).call(this, chunk);
-            chatId = chunk.id;
-        }
-        if (stream.controller.signal?.aborted) {
-            throw new APIUserAbortError();
-        }
-        return this._addChatCompletion(__classPrivateFieldGet$1(this, _ChatCompletionStream_instances, "m", _ChatCompletionStream_endRequest).call(this));
-    }
-    [(_ChatCompletionStream_params = new WeakMap(), _ChatCompletionStream_choiceEventStates = new WeakMap(), _ChatCompletionStream_currentChatCompletionSnapshot = new WeakMap(), _ChatCompletionStream_instances = new WeakSet(), _ChatCompletionStream_beginRequest = function _ChatCompletionStream_beginRequest() {
-        if (this.ended)
-            return;
-        __classPrivateFieldSet$1(this, _ChatCompletionStream_currentChatCompletionSnapshot, undefined, "f");
-    }, _ChatCompletionStream_getChoiceEventState = function _ChatCompletionStream_getChoiceEventState(choice) {
-        let state = __classPrivateFieldGet$1(this, _ChatCompletionStream_choiceEventStates, "f")[choice.index];
-        if (state) {
-            return state;
-        }
-        state = {
-            content_done: false,
-            refusal_done: false,
-            logprobs_content_done: false,
-            logprobs_refusal_done: false,
-            done_tool_calls: new Set(),
-            current_tool_call_index: null,
-        };
-        __classPrivateFieldGet$1(this, _ChatCompletionStream_choiceEventStates, "f")[choice.index] = state;
-        return state;
-    }, _ChatCompletionStream_addChunk = function _ChatCompletionStream_addChunk(chunk) {
-        if (this.ended)
-            return;
-        const completion = __classPrivateFieldGet$1(this, _ChatCompletionStream_instances, "m", _ChatCompletionStream_accumulateChatCompletion).call(this, chunk);
-        this._emit('chunk', chunk, completion);
-        for (const choice of chunk.choices) {
-            const choiceSnapshot = completion.choices[choice.index];
-            if (choice.delta.content != null &&
-                choiceSnapshot.message?.role === 'assistant' &&
-                choiceSnapshot.message?.content) {
-                this._emit('content', choice.delta.content, choiceSnapshot.message.content);
-                this._emit('content.delta', {
-                    delta: choice.delta.content,
-                    snapshot: choiceSnapshot.message.content,
-                    parsed: choiceSnapshot.message.parsed,
-                });
-            }
-            if (choice.delta.refusal != null &&
-                choiceSnapshot.message?.role === 'assistant' &&
-                choiceSnapshot.message?.refusal) {
-                this._emit('refusal.delta', {
-                    delta: choice.delta.refusal,
-                    snapshot: choiceSnapshot.message.refusal,
-                });
-            }
-            if (choice.logprobs?.content != null && choiceSnapshot.message?.role === 'assistant') {
-                this._emit('logprobs.content.delta', {
-                    content: choice.logprobs?.content,
-                    snapshot: choiceSnapshot.logprobs?.content ?? [],
-                });
-            }
-            if (choice.logprobs?.refusal != null && choiceSnapshot.message?.role === 'assistant') {
-                this._emit('logprobs.refusal.delta', {
-                    refusal: choice.logprobs?.refusal,
-                    snapshot: choiceSnapshot.logprobs?.refusal ?? [],
-                });
-            }
-            const state = __classPrivateFieldGet$1(this, _ChatCompletionStream_instances, "m", _ChatCompletionStream_getChoiceEventState).call(this, choiceSnapshot);
-            if (choiceSnapshot.finish_reason) {
-                __classPrivateFieldGet$1(this, _ChatCompletionStream_instances, "m", _ChatCompletionStream_emitContentDoneEvents).call(this, choiceSnapshot);
-                if (state.current_tool_call_index != null) {
-                    __classPrivateFieldGet$1(this, _ChatCompletionStream_instances, "m", _ChatCompletionStream_emitToolCallDoneEvent).call(this, choiceSnapshot, state.current_tool_call_index);
-                }
-            }
-            for (const toolCall of choice.delta.tool_calls ?? []) {
-                if (state.current_tool_call_index !== toolCall.index) {
-                    __classPrivateFieldGet$1(this, _ChatCompletionStream_instances, "m", _ChatCompletionStream_emitContentDoneEvents).call(this, choiceSnapshot);
-                    // new tool call started, the previous one is done
-                    if (state.current_tool_call_index != null) {
-                        __classPrivateFieldGet$1(this, _ChatCompletionStream_instances, "m", _ChatCompletionStream_emitToolCallDoneEvent).call(this, choiceSnapshot, state.current_tool_call_index);
-                    }
-                }
-                state.current_tool_call_index = toolCall.index;
-            }
-            for (const toolCallDelta of choice.delta.tool_calls ?? []) {
-                const toolCallSnapshot = choiceSnapshot.message.tool_calls?.[toolCallDelta.index];
-                if (!toolCallSnapshot?.type) {
-                    continue;
-                }
-                if (toolCallSnapshot?.type === 'function') {
-                    this._emit('tool_calls.function.arguments.delta', {
-                        name: toolCallSnapshot.function?.name,
-                        index: toolCallDelta.index,
-                        arguments: toolCallSnapshot.function.arguments,
-                        parsed_arguments: toolCallSnapshot.function.parsed_arguments,
-                        arguments_delta: toolCallDelta.function?.arguments ?? '',
-                    });
-                }
-                else {
-                    assertNever(toolCallSnapshot?.type);
-                }
-            }
-        }
-    }, _ChatCompletionStream_emitToolCallDoneEvent = function _ChatCompletionStream_emitToolCallDoneEvent(choiceSnapshot, toolCallIndex) {
-        const state = __classPrivateFieldGet$1(this, _ChatCompletionStream_instances, "m", _ChatCompletionStream_getChoiceEventState).call(this, choiceSnapshot);
-        if (state.done_tool_calls.has(toolCallIndex)) {
-            // we've already fired the done event
-            return;
-        }
-        const toolCallSnapshot = choiceSnapshot.message.tool_calls?.[toolCallIndex];
-        if (!toolCallSnapshot) {
-            throw new Error('no tool call snapshot');
-        }
-        if (!toolCallSnapshot.type) {
-            throw new Error('tool call snapshot missing `type`');
-        }
-        if (toolCallSnapshot.type === 'function') {
-            const inputTool = __classPrivateFieldGet$1(this, _ChatCompletionStream_params, "f")?.tools?.find((tool) => tool.type === 'function' && tool.function.name === toolCallSnapshot.function.name);
-            this._emit('tool_calls.function.arguments.done', {
-                name: toolCallSnapshot.function.name,
-                index: toolCallIndex,
-                arguments: toolCallSnapshot.function.arguments,
-                parsed_arguments: isAutoParsableTool(inputTool) ? inputTool.$parseRaw(toolCallSnapshot.function.arguments)
-                    : inputTool?.function.strict ? JSON.parse(toolCallSnapshot.function.arguments)
-                        : null,
-            });
-        }
-        else {
-            assertNever(toolCallSnapshot.type);
-        }
-    }, _ChatCompletionStream_emitContentDoneEvents = function _ChatCompletionStream_emitContentDoneEvents(choiceSnapshot) {
-        const state = __classPrivateFieldGet$1(this, _ChatCompletionStream_instances, "m", _ChatCompletionStream_getChoiceEventState).call(this, choiceSnapshot);
-        if (choiceSnapshot.message.content && !state.content_done) {
-            state.content_done = true;
-            const responseFormat = __classPrivateFieldGet$1(this, _ChatCompletionStream_instances, "m", _ChatCompletionStream_getAutoParseableResponseFormat).call(this);
-            this._emit('content.done', {
-                content: choiceSnapshot.message.content,
-                parsed: responseFormat ? responseFormat.$parseRaw(choiceSnapshot.message.content) : null,
-            });
-        }
-        if (choiceSnapshot.message.refusal && !state.refusal_done) {
-            state.refusal_done = true;
-            this._emit('refusal.done', { refusal: choiceSnapshot.message.refusal });
-        }
-        if (choiceSnapshot.logprobs?.content && !state.logprobs_content_done) {
-            state.logprobs_content_done = true;
-            this._emit('logprobs.content.done', { content: choiceSnapshot.logprobs.content });
-        }
-        if (choiceSnapshot.logprobs?.refusal && !state.logprobs_refusal_done) {
-            state.logprobs_refusal_done = true;
-            this._emit('logprobs.refusal.done', { refusal: choiceSnapshot.logprobs.refusal });
-        }
-    }, _ChatCompletionStream_endRequest = function _ChatCompletionStream_endRequest() {
-        if (this.ended) {
-            throw new OpenAIError(`stream has ended, this shouldn't happen`);
-        }
-        const snapshot = __classPrivateFieldGet$1(this, _ChatCompletionStream_currentChatCompletionSnapshot, "f");
-        if (!snapshot) {
-            throw new OpenAIError(`request ended without sending any chunks`);
-        }
-        __classPrivateFieldSet$1(this, _ChatCompletionStream_currentChatCompletionSnapshot, undefined, "f");
-        __classPrivateFieldSet$1(this, _ChatCompletionStream_choiceEventStates, [], "f");
-        return finalizeChatCompletion(snapshot, __classPrivateFieldGet$1(this, _ChatCompletionStream_params, "f"));
-    }, _ChatCompletionStream_getAutoParseableResponseFormat = function _ChatCompletionStream_getAutoParseableResponseFormat() {
-        const responseFormat = __classPrivateFieldGet$1(this, _ChatCompletionStream_params, "f")?.response_format;
-        if (isAutoParsableResponseFormat(responseFormat)) {
-            return responseFormat;
-        }
-        return null;
-    }, _ChatCompletionStream_accumulateChatCompletion = function _ChatCompletionStream_accumulateChatCompletion(chunk) {
-        var _a, _b, _c, _d;
-        let snapshot = __classPrivateFieldGet$1(this, _ChatCompletionStream_currentChatCompletionSnapshot, "f");
-        const { choices, ...rest } = chunk;
-        if (!snapshot) {
-            snapshot = __classPrivateFieldSet$1(this, _ChatCompletionStream_currentChatCompletionSnapshot, {
-                ...rest,
-                choices: [],
-            }, "f");
-        }
-        else {
-            Object.assign(snapshot, rest);
-        }
-        for (const { delta, finish_reason, index, logprobs = null, ...other } of chunk.choices) {
-            let choice = snapshot.choices[index];
-            if (!choice) {
-                choice = snapshot.choices[index] = { finish_reason, index, message: {}, logprobs, ...other };
-            }
-            if (logprobs) {
-                if (!choice.logprobs) {
-                    choice.logprobs = Object.assign({}, logprobs);
-                }
-                else {
-                    const { content, refusal, ...rest } = logprobs;
-                    Object.assign(choice.logprobs, rest);
-                    if (content) {
-                        (_a = choice.logprobs).content ?? (_a.content = []);
-                        choice.logprobs.content.push(...content);
-                    }
-                    if (refusal) {
-                        (_b = choice.logprobs).refusal ?? (_b.refusal = []);
-                        choice.logprobs.refusal.push(...refusal);
-                    }
-                }
-            }
-            if (finish_reason) {
-                choice.finish_reason = finish_reason;
-                if (__classPrivateFieldGet$1(this, _ChatCompletionStream_params, "f") && hasAutoParseableInput(__classPrivateFieldGet$1(this, _ChatCompletionStream_params, "f"))) {
-                    if (finish_reason === 'length') {
-                        throw new LengthFinishReasonError();
-                    }
-                    if (finish_reason === 'content_filter') {
-                        throw new ContentFilterFinishReasonError();
-                    }
-                }
-            }
-            Object.assign(choice, other);
-            if (!delta)
-                continue; // Shouldn't happen; just in case.
-            const { content, refusal, function_call, role, tool_calls, ...rest } = delta;
-            Object.assign(choice.message, rest);
-            if (refusal) {
-                choice.message.refusal = (choice.message.refusal || '') + refusal;
-            }
-            if (role)
-                choice.message.role = role;
-            if (function_call) {
-                if (!choice.message.function_call) {
-                    choice.message.function_call = function_call;
-                }
-                else {
-                    if (function_call.name)
-                        choice.message.function_call.name = function_call.name;
-                    if (function_call.arguments) {
-                        (_c = choice.message.function_call).arguments ?? (_c.arguments = '');
-                        choice.message.function_call.arguments += function_call.arguments;
-                    }
-                }
-            }
-            if (content) {
-                choice.message.content = (choice.message.content || '') + content;
-                if (!choice.message.refusal && __classPrivateFieldGet$1(this, _ChatCompletionStream_instances, "m", _ChatCompletionStream_getAutoParseableResponseFormat).call(this)) {
-                    choice.message.parsed = partialParse(choice.message.content);
-                }
-            }
-            if (tool_calls) {
-                if (!choice.message.tool_calls)
-                    choice.message.tool_calls = [];
-                for (const { index, id, type, function: fn, ...rest } of tool_calls) {
-                    const tool_call = ((_d = choice.message.tool_calls)[index] ?? (_d[index] = {}));
-                    Object.assign(tool_call, rest);
-                    if (id)
-                        tool_call.id = id;
-                    if (type)
-                        tool_call.type = type;
-                    if (fn)
-                        tool_call.function ?? (tool_call.function = { name: fn.name ?? '', arguments: '' });
-                    if (fn?.name)
-                        tool_call.function.name = fn.name;
-                    if (fn?.arguments) {
-                        tool_call.function.arguments += fn.arguments;
-                        if (shouldParseToolCall(__classPrivateFieldGet$1(this, _ChatCompletionStream_params, "f"), tool_call)) {
-                            tool_call.function.parsed_arguments = partialParse(tool_call.function.arguments);
-                        }
-                    }
-                }
-            }
-        }
-        return snapshot;
-    }, Symbol.asyncIterator)]() {
-        const pushQueue = [];
-        const readQueue = [];
-        let done = false;
-        this.on('chunk', (chunk) => {
-            const reader = readQueue.shift();
-            if (reader) {
-                reader.resolve(chunk);
-            }
-            else {
-                pushQueue.push(chunk);
-            }
-        });
-        this.on('end', () => {
-            done = true;
-            for (const reader of readQueue) {
-                reader.resolve(undefined);
-            }
-            readQueue.length = 0;
-        });
-        this.on('abort', (err) => {
-            done = true;
-            for (const reader of readQueue) {
-                reader.reject(err);
-            }
-            readQueue.length = 0;
-        });
-        this.on('error', (err) => {
-            done = true;
-            for (const reader of readQueue) {
-                reader.reject(err);
-            }
-            readQueue.length = 0;
-        });
-        return {
-            next: async () => {
-                if (!pushQueue.length) {
-                    if (done) {
-                        return { value: undefined, done: true };
-                    }
-                    return new Promise((resolve, reject) => readQueue.push({ resolve, reject })).then((chunk) => (chunk ? { value: chunk, done: false } : { value: undefined, done: true }));
-                }
-                const chunk = pushQueue.shift();
-                return { value: chunk, done: false };
-            },
-            return: async () => {
-                this.abort();
-                return { value: undefined, done: true };
-            },
-        };
-    }
-    toReadableStream() {
-        const stream = new Stream(this[Symbol.asyncIterator].bind(this), this.controller);
-        return stream.toReadableStream();
-    }
-}
-function finalizeChatCompletion(snapshot, params) {
-    const { id, choices, created, model, system_fingerprint, ...rest } = snapshot;
-    const completion = {
-        ...rest,
-        id,
-        choices: choices.map(({ message, finish_reason, index, logprobs, ...choiceRest }) => {
-            if (!finish_reason) {
-                throw new OpenAIError(`missing finish_reason for choice ${index}`);
-            }
-            const { content = null, function_call, tool_calls, ...messageRest } = message;
-            const role = message.role; // this is what we expect; in theory it could be different which would make our types a slight lie but would be fine.
-            if (!role) {
-                throw new OpenAIError(`missing role for choice ${index}`);
-            }
-            if (function_call) {
-                const { arguments: args, name } = function_call;
-                if (args == null) {
-                    throw new OpenAIError(`missing function_call.arguments for choice ${index}`);
-                }
-                if (!name) {
-                    throw new OpenAIError(`missing function_call.name for choice ${index}`);
-                }
-                return {
-                    ...choiceRest,
-                    message: {
-                        content,
-                        function_call: { arguments: args, name },
-                        role,
-                        refusal: message.refusal ?? null,
-                    },
-                    finish_reason,
-                    index,
-                    logprobs,
-                };
-            }
-            if (tool_calls) {
-                return {
-                    ...choiceRest,
-                    index,
-                    finish_reason,
-                    logprobs,
-                    message: {
-                        ...messageRest,
-                        role,
-                        content,
-                        refusal: message.refusal ?? null,
-                        tool_calls: tool_calls.map((tool_call, i) => {
-                            const { function: fn, type, id, ...toolRest } = tool_call;
-                            const { arguments: args, name, ...fnRest } = fn || {};
-                            if (id == null) {
-                                throw new OpenAIError(`missing choices[${index}].tool_calls[${i}].id\n${str(snapshot)}`);
-                            }
-                            if (type == null) {
-                                throw new OpenAIError(`missing choices[${index}].tool_calls[${i}].type\n${str(snapshot)}`);
-                            }
-                            if (name == null) {
-                                throw new OpenAIError(`missing choices[${index}].tool_calls[${i}].function.name\n${str(snapshot)}`);
-                            }
-                            if (args == null) {
-                                throw new OpenAIError(`missing choices[${index}].tool_calls[${i}].function.arguments\n${str(snapshot)}`);
-                            }
-                            return { ...toolRest, id, type, function: { ...fnRest, name, arguments: args } };
-                        }),
-                    },
-                };
-            }
-            return {
-                ...choiceRest,
-                message: { ...messageRest, content, role, refusal: message.refusal ?? null },
-                finish_reason,
-                index,
-                logprobs,
-            };
-        }),
-        created,
-        model,
-        object: 'chat.completion',
-        ...(system_fingerprint ? { system_fingerprint } : {}),
-    };
-    return maybeParseChatCompletion(completion, params);
-}
-function str(x) {
-    return JSON.stringify(x);
-}
-function assertNever(_x) { }
-
-class ChatCompletionStreamingRunner extends ChatCompletionStream {
-    static fromReadableStream(stream) {
-        const runner = new ChatCompletionStreamingRunner(null);
-        runner._run(() => runner._fromReadableStream(stream));
-        return runner;
-    }
-    /** @deprecated - please use `runTools` instead. */
-    static runFunctions(client, params, options) {
-        const runner = new ChatCompletionStreamingRunner(null);
-        const opts = {
-            ...options,
-            headers: { ...options?.headers, 'X-Stainless-Helper-Method': 'runFunctions' },
-        };
-        runner._run(() => runner._runFunctions(client, params, opts));
-        return runner;
-    }
-    static runTools(client, params, options) {
-        const runner = new ChatCompletionStreamingRunner(
-        // @ts-expect-error TODO these types are incompatible
-        params);
-        const opts = {
-            ...options,
-            headers: { ...options?.headers, 'X-Stainless-Helper-Method': 'runTools' },
-        };
-        runner._run(() => runner._runTools(client, params, opts));
-        return runner;
-    }
-}
-
-// File generated from our OpenAPI spec by Stainless. See CONTRIBUTING.md for details.
-let Completions$1 = class Completions extends APIResource {
-    parse(body, options) {
-        validateInputTools(body.tools);
-        return this._client.chat.completions
-            .create(body, {
-            ...options,
-            headers: {
-                ...options?.headers,
-                'X-Stainless-Helper-Method': 'beta.chat.completions.parse',
-            },
-        })
-            ._thenUnwrap((completion) => parseChatCompletion(completion, body));
-    }
-    runFunctions(body, options) {
-        if (body.stream) {
-            return ChatCompletionStreamingRunner.runFunctions(this._client, body, options);
-        }
-        return ChatCompletionRunner.runFunctions(this._client, body, options);
-    }
-    runTools(body, options) {
-        if (body.stream) {
-            return ChatCompletionStreamingRunner.runTools(this._client, body, options);
-        }
-        return ChatCompletionRunner.runTools(this._client, body, options);
-    }
-    /**
-     * Creates a chat completion stream
-     */
-    stream(body, options) {
-        return ChatCompletionStream.createChatCompletion(this._client, body, options);
-    }
-};
-
-// File generated from our OpenAPI spec by Stainless. See CONTRIBUTING.md for details.
-let Chat$1 = class Chat extends APIResource {
-    constructor() {
-        super(...arguments);
-        this.completions = new Completions$1(this._client);
-    }
-};
-(function (Chat) {
-    Chat.Completions = Completions$1;
-})(Chat$1);
-
-// File generated from our OpenAPI spec by Stainless. See CONTRIBUTING.md for details.
-class Sessions extends APIResource {
-    /**
-     * Create an ephemeral API token for use in client-side applications with the
-     * Realtime API. Can be configured with the same session parameters as the
-     * `session.update` client event.
-     *
-     * It responds with a session object, plus a `client_secret` key which contains a
-     * usable ephemeral API token that can be used to authenticate browser clients for
-     * the Realtime API.
-     */
-    create(body, options) {
-        return this._client.post('/realtime/sessions', {
-            body,
-            ...options,
-            headers: { 'OpenAI-Beta': 'assistants=v2', ...options?.headers },
-        });
-    }
-}
-
-// File generated from our OpenAPI spec by Stainless. See CONTRIBUTING.md for details.
-class Realtime extends APIResource {
-    constructor() {
-        super(...arguments);
-        this.sessions = new Sessions(this._client);
-    }
-}
-Realtime.Sessions = Sessions;
-
-var __classPrivateFieldGet = (undefined && undefined.__classPrivateFieldGet) || function (receiver, state, kind, f) {
-    if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a getter");
-    if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot read private member from an object whose class did not declare it");
-    return kind === "m" ? f : kind === "a" ? f.call(receiver) : f ? f.value : state.get(receiver);
-};
-var __classPrivateFieldSet = (undefined && undefined.__classPrivateFieldSet) || function (receiver, state, value, kind, f) {
-    if (kind === "m") throw new TypeError("Private method is not writable");
-    if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a setter");
-    if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot write private member to an object whose class did not declare it");
-    return (kind === "a" ? f.call(receiver, value) : f ? f.value = value : state.set(receiver, value)), value;
-};
-var _AssistantStream_instances, _AssistantStream_events, _AssistantStream_runStepSnapshots, _AssistantStream_messageSnapshots, _AssistantStream_messageSnapshot, _AssistantStream_finalRun, _AssistantStream_currentContentIndex, _AssistantStream_currentContent, _AssistantStream_currentToolCallIndex, _AssistantStream_currentToolCall, _AssistantStream_currentEvent, _AssistantStream_currentRunSnapshot, _AssistantStream_currentRunStepSnapshot, _AssistantStream_addEvent, _AssistantStream_endRequest, _AssistantStream_handleMessage, _AssistantStream_handleRunStep, _AssistantStream_handleEvent, _AssistantStream_accumulateRunStep, _AssistantStream_accumulateMessage, _AssistantStream_accumulateContent, _AssistantStream_handleRun;
-class AssistantStream extends EventStream {
-    constructor() {
-        super(...arguments);
-        _AssistantStream_instances.add(this);
-        //Track all events in a single list for reference
-        _AssistantStream_events.set(this, []);
-        //Used to accumulate deltas
-        //We are accumulating many types so the value here is not strict
-        _AssistantStream_runStepSnapshots.set(this, {});
-        _AssistantStream_messageSnapshots.set(this, {});
-        _AssistantStream_messageSnapshot.set(this, undefined);
-        _AssistantStream_finalRun.set(this, undefined);
-        _AssistantStream_currentContentIndex.set(this, undefined);
-        _AssistantStream_currentContent.set(this, undefined);
-        _AssistantStream_currentToolCallIndex.set(this, undefined);
-        _AssistantStream_currentToolCall.set(this, undefined);
-        //For current snapshot methods
-        _AssistantStream_currentEvent.set(this, undefined);
-        _AssistantStream_currentRunSnapshot.set(this, undefined);
-        _AssistantStream_currentRunStepSnapshot.set(this, undefined);
-    }
-    [(_AssistantStream_events = new WeakMap(), _AssistantStream_runStepSnapshots = new WeakMap(), _AssistantStream_messageSnapshots = new WeakMap(), _AssistantStream_messageSnapshot = new WeakMap(), _AssistantStream_finalRun = new WeakMap(), _AssistantStream_currentContentIndex = new WeakMap(), _AssistantStream_currentContent = new WeakMap(), _AssistantStream_currentToolCallIndex = new WeakMap(), _AssistantStream_currentToolCall = new WeakMap(), _AssistantStream_currentEvent = new WeakMap(), _AssistantStream_currentRunSnapshot = new WeakMap(), _AssistantStream_currentRunStepSnapshot = new WeakMap(), _AssistantStream_instances = new WeakSet(), Symbol.asyncIterator)]() {
-        const pushQueue = [];
-        const readQueue = [];
-        let done = false;
-        //Catch all for passing along all events
-        this.on('event', (event) => {
-            const reader = readQueue.shift();
-            if (reader) {
-                reader.resolve(event);
-            }
-            else {
-                pushQueue.push(event);
-            }
-        });
-        this.on('end', () => {
-            done = true;
-            for (const reader of readQueue) {
-                reader.resolve(undefined);
-            }
-            readQueue.length = 0;
-        });
-        this.on('abort', (err) => {
-            done = true;
-            for (const reader of readQueue) {
-                reader.reject(err);
-            }
-            readQueue.length = 0;
-        });
-        this.on('error', (err) => {
-            done = true;
-            for (const reader of readQueue) {
-                reader.reject(err);
-            }
-            readQueue.length = 0;
-        });
-        return {
-            next: async () => {
-                if (!pushQueue.length) {
-                    if (done) {
-                        return { value: undefined, done: true };
-                    }
-                    return new Promise((resolve, reject) => readQueue.push({ resolve, reject })).then((chunk) => (chunk ? { value: chunk, done: false } : { value: undefined, done: true }));
-                }
-                const chunk = pushQueue.shift();
-                return { value: chunk, done: false };
-            },
-            return: async () => {
-                this.abort();
-                return { value: undefined, done: true };
-            },
-        };
-    }
-    static fromReadableStream(stream) {
-        const runner = new AssistantStream();
-        runner._run(() => runner._fromReadableStream(stream));
-        return runner;
-    }
-    async _fromReadableStream(readableStream, options) {
-        const signal = options?.signal;
-        if (signal) {
-            if (signal.aborted)
-                this.controller.abort();
-            signal.addEventListener('abort', () => this.controller.abort());
-        }
-        this._connected();
-        const stream = Stream.fromReadableStream(readableStream, this.controller);
-        for await (const event of stream) {
-            __classPrivateFieldGet(this, _AssistantStream_instances, "m", _AssistantStream_addEvent).call(this, event);
-        }
-        if (stream.controller.signal?.aborted) {
-            throw new APIUserAbortError();
-        }
-        return this._addRun(__classPrivateFieldGet(this, _AssistantStream_instances, "m", _AssistantStream_endRequest).call(this));
-    }
-    toReadableStream() {
-        const stream = new Stream(this[Symbol.asyncIterator].bind(this), this.controller);
-        return stream.toReadableStream();
-    }
-    static createToolAssistantStream(threadId, runId, runs, params, options) {
-        const runner = new AssistantStream();
-        runner._run(() => runner._runToolAssistantStream(threadId, runId, runs, params, {
-            ...options,
-            headers: { ...options?.headers, 'X-Stainless-Helper-Method': 'stream' },
-        }));
-        return runner;
-    }
-    async _createToolAssistantStream(run, threadId, runId, params, options) {
-        const signal = options?.signal;
-        if (signal) {
-            if (signal.aborted)
-                this.controller.abort();
-            signal.addEventListener('abort', () => this.controller.abort());
-        }
-        const body = { ...params, stream: true };
-        const stream = await run.submitToolOutputs(threadId, runId, body, {
-            ...options,
-            signal: this.controller.signal,
-        });
-        this._connected();
-        for await (const event of stream) {
-            __classPrivateFieldGet(this, _AssistantStream_instances, "m", _AssistantStream_addEvent).call(this, event);
-        }
-        if (stream.controller.signal?.aborted) {
-            throw new APIUserAbortError();
-        }
-        return this._addRun(__classPrivateFieldGet(this, _AssistantStream_instances, "m", _AssistantStream_endRequest).call(this));
-    }
-    static createThreadAssistantStream(params, thread, options) {
-        const runner = new AssistantStream();
-        runner._run(() => runner._threadAssistantStream(params, thread, {
-            ...options,
-            headers: { ...options?.headers, 'X-Stainless-Helper-Method': 'stream' },
-        }));
-        return runner;
-    }
-    static createAssistantStream(threadId, runs, params, options) {
-        const runner = new AssistantStream();
-        runner._run(() => runner._runAssistantStream(threadId, runs, params, {
-            ...options,
-            headers: { ...options?.headers, 'X-Stainless-Helper-Method': 'stream' },
-        }));
-        return runner;
-    }
-    currentEvent() {
-        return __classPrivateFieldGet(this, _AssistantStream_currentEvent, "f");
-    }
-    currentRun() {
-        return __classPrivateFieldGet(this, _AssistantStream_currentRunSnapshot, "f");
-    }
-    currentMessageSnapshot() {
-        return __classPrivateFieldGet(this, _AssistantStream_messageSnapshot, "f");
-    }
-    currentRunStepSnapshot() {
-        return __classPrivateFieldGet(this, _AssistantStream_currentRunStepSnapshot, "f");
-    }
-    async finalRunSteps() {
-        await this.done();
-        return Object.values(__classPrivateFieldGet(this, _AssistantStream_runStepSnapshots, "f"));
-    }
-    async finalMessages() {
-        await this.done();
-        return Object.values(__classPrivateFieldGet(this, _AssistantStream_messageSnapshots, "f"));
-    }
-    async finalRun() {
-        await this.done();
-        if (!__classPrivateFieldGet(this, _AssistantStream_finalRun, "f"))
-            throw Error('Final run was not received.');
-        return __classPrivateFieldGet(this, _AssistantStream_finalRun, "f");
-    }
-    async _createThreadAssistantStream(thread, params, options) {
-        const signal = options?.signal;
-        if (signal) {
-            if (signal.aborted)
-                this.controller.abort();
-            signal.addEventListener('abort', () => this.controller.abort());
-        }
-        const body = { ...params, stream: true };
-        const stream = await thread.createAndRun(body, { ...options, signal: this.controller.signal });
-        this._connected();
-        for await (const event of stream) {
-            __classPrivateFieldGet(this, _AssistantStream_instances, "m", _AssistantStream_addEvent).call(this, event);
-        }
-        if (stream.controller.signal?.aborted) {
-            throw new APIUserAbortError();
-        }
-        return this._addRun(__classPrivateFieldGet(this, _AssistantStream_instances, "m", _AssistantStream_endRequest).call(this));
-    }
-    async _createAssistantStream(run, threadId, params, options) {
-        const signal = options?.signal;
-        if (signal) {
-            if (signal.aborted)
-                this.controller.abort();
-            signal.addEventListener('abort', () => this.controller.abort());
-        }
-        const body = { ...params, stream: true };
-        const stream = await run.create(threadId, body, { ...options, signal: this.controller.signal });
-        this._connected();
-        for await (const event of stream) {
-            __classPrivateFieldGet(this, _AssistantStream_instances, "m", _AssistantStream_addEvent).call(this, event);
-        }
-        if (stream.controller.signal?.aborted) {
-            throw new APIUserAbortError();
-        }
-        return this._addRun(__classPrivateFieldGet(this, _AssistantStream_instances, "m", _AssistantStream_endRequest).call(this));
-    }
-    static accumulateDelta(acc, delta) {
-        for (const [key, deltaValue] of Object.entries(delta)) {
-            if (!acc.hasOwnProperty(key)) {
-                acc[key] = deltaValue;
-                continue;
-            }
-            let accValue = acc[key];
-            if (accValue === null || accValue === undefined) {
-                acc[key] = deltaValue;
-                continue;
-            }
-            // We don't accumulate these special properties
-            if (key === 'index' || key === 'type') {
-                acc[key] = deltaValue;
-                continue;
-            }
-            // Type-specific accumulation logic
-            if (typeof accValue === 'string' && typeof deltaValue === 'string') {
-                accValue += deltaValue;
-            }
-            else if (typeof accValue === 'number' && typeof deltaValue === 'number') {
-                accValue += deltaValue;
-            }
-            else if (isObj(accValue) && isObj(deltaValue)) {
-                accValue = this.accumulateDelta(accValue, deltaValue);
-            }
-            else if (Array.isArray(accValue) && Array.isArray(deltaValue)) {
-                if (accValue.every((x) => typeof x === 'string' || typeof x === 'number')) {
-                    accValue.push(...deltaValue); // Use spread syntax for efficient addition
-                    continue;
-                }
-                for (const deltaEntry of deltaValue) {
-                    if (!isObj(deltaEntry)) {
-                        throw new Error(`Expected array delta entry to be an object but got: ${deltaEntry}`);
-                    }
-                    const index = deltaEntry['index'];
-                    if (index == null) {
-                        console.error(deltaEntry);
-                        throw new Error('Expected array delta entry to have an `index` property');
-                    }
-                    if (typeof index !== 'number') {
-                        throw new Error(`Expected array delta entry \`index\` property to be a number but got ${index}`);
-                    }
-                    const accEntry = accValue[index];
-                    if (accEntry == null) {
-                        accValue.push(deltaEntry);
-                    }
-                    else {
-                        accValue[index] = this.accumulateDelta(accEntry, deltaEntry);
-                    }
-                }
-                continue;
-            }
-            else {
-                throw Error(`Unhandled record type: ${key}, deltaValue: ${deltaValue}, accValue: ${accValue}`);
-            }
-            acc[key] = accValue;
-        }
-        return acc;
-    }
-    _addRun(run) {
-        return run;
-    }
-    async _threadAssistantStream(params, thread, options) {
-        return await this._createThreadAssistantStream(thread, params, options);
-    }
-    async _runAssistantStream(threadId, runs, params, options) {
-        return await this._createAssistantStream(runs, threadId, params, options);
-    }
-    async _runToolAssistantStream(threadId, runId, runs, params, options) {
-        return await this._createToolAssistantStream(runs, threadId, runId, params, options);
-    }
-}
-_AssistantStream_addEvent = function _AssistantStream_addEvent(event) {
-    if (this.ended)
-        return;
-    __classPrivateFieldSet(this, _AssistantStream_currentEvent, event, "f");
-    __classPrivateFieldGet(this, _AssistantStream_instances, "m", _AssistantStream_handleEvent).call(this, event);
-    switch (event.event) {
-        case 'thread.created':
-            //No action on this event.
-            break;
-        case 'thread.run.created':
-        case 'thread.run.queued':
-        case 'thread.run.in_progress':
-        case 'thread.run.requires_action':
-        case 'thread.run.completed':
-        case 'thread.run.failed':
-        case 'thread.run.cancelling':
-        case 'thread.run.cancelled':
-        case 'thread.run.expired':
-            __classPrivateFieldGet(this, _AssistantStream_instances, "m", _AssistantStream_handleRun).call(this, event);
-            break;
-        case 'thread.run.step.created':
-        case 'thread.run.step.in_progress':
-        case 'thread.run.step.delta':
-        case 'thread.run.step.completed':
-        case 'thread.run.step.failed':
-        case 'thread.run.step.cancelled':
-        case 'thread.run.step.expired':
-            __classPrivateFieldGet(this, _AssistantStream_instances, "m", _AssistantStream_handleRunStep).call(this, event);
-            break;
-        case 'thread.message.created':
-        case 'thread.message.in_progress':
-        case 'thread.message.delta':
-        case 'thread.message.completed':
-        case 'thread.message.incomplete':
-            __classPrivateFieldGet(this, _AssistantStream_instances, "m", _AssistantStream_handleMessage).call(this, event);
-            break;
-        case 'error':
-            //This is included for completeness, but errors are processed in the SSE event processing so this should not occur
-            throw new Error('Encountered an error event in event processing - errors should be processed earlier');
-    }
-}, _AssistantStream_endRequest = function _AssistantStream_endRequest() {
-    if (this.ended) {
-        throw new OpenAIError(`stream has ended, this shouldn't happen`);
-    }
-    if (!__classPrivateFieldGet(this, _AssistantStream_finalRun, "f"))
-        throw Error('Final run has not been received');
-    return __classPrivateFieldGet(this, _AssistantStream_finalRun, "f");
-}, _AssistantStream_handleMessage = function _AssistantStream_handleMessage(event) {
-    const [accumulatedMessage, newContent] = __classPrivateFieldGet(this, _AssistantStream_instances, "m", _AssistantStream_accumulateMessage).call(this, event, __classPrivateFieldGet(this, _AssistantStream_messageSnapshot, "f"));
-    __classPrivateFieldSet(this, _AssistantStream_messageSnapshot, accumulatedMessage, "f");
-    __classPrivateFieldGet(this, _AssistantStream_messageSnapshots, "f")[accumulatedMessage.id] = accumulatedMessage;
-    for (const content of newContent) {
-        const snapshotContent = accumulatedMessage.content[content.index];
-        if (snapshotContent?.type == 'text') {
-            this._emit('textCreated', snapshotContent.text);
-        }
-    }
-    switch (event.event) {
-        case 'thread.message.created':
-            this._emit('messageCreated', event.data);
-            break;
-        case 'thread.message.in_progress':
-            break;
-        case 'thread.message.delta':
-            this._emit('messageDelta', event.data.delta, accumulatedMessage);
-            if (event.data.delta.content) {
-                for (const content of event.data.delta.content) {
-                    //If it is text delta, emit a text delta event
-                    if (content.type == 'text' && content.text) {
-                        let textDelta = content.text;
-                        let snapshot = accumulatedMessage.content[content.index];
-                        if (snapshot && snapshot.type == 'text') {
-                            this._emit('textDelta', textDelta, snapshot.text);
-                        }
-                        else {
-                            throw Error('The snapshot associated with this text delta is not text or missing');
-                        }
-                    }
-                    if (content.index != __classPrivateFieldGet(this, _AssistantStream_currentContentIndex, "f")) {
-                        //See if we have in progress content
-                        if (__classPrivateFieldGet(this, _AssistantStream_currentContent, "f")) {
-                            switch (__classPrivateFieldGet(this, _AssistantStream_currentContent, "f").type) {
-                                case 'text':
-                                    this._emit('textDone', __classPrivateFieldGet(this, _AssistantStream_currentContent, "f").text, __classPrivateFieldGet(this, _AssistantStream_messageSnapshot, "f"));
-                                    break;
-                                case 'image_file':
-                                    this._emit('imageFileDone', __classPrivateFieldGet(this, _AssistantStream_currentContent, "f").image_file, __classPrivateFieldGet(this, _AssistantStream_messageSnapshot, "f"));
-                                    break;
-                            }
-                        }
-                        __classPrivateFieldSet(this, _AssistantStream_currentContentIndex, content.index, "f");
-                    }
-                    __classPrivateFieldSet(this, _AssistantStream_currentContent, accumulatedMessage.content[content.index], "f");
-                }
-            }
-            break;
-        case 'thread.message.completed':
-        case 'thread.message.incomplete':
-            //We emit the latest content we were working on on completion (including incomplete)
-            if (__classPrivateFieldGet(this, _AssistantStream_currentContentIndex, "f") !== undefined) {
-                const currentContent = event.data.content[__classPrivateFieldGet(this, _AssistantStream_currentContentIndex, "f")];
-                if (currentContent) {
-                    switch (currentContent.type) {
-                        case 'image_file':
-                            this._emit('imageFileDone', currentContent.image_file, __classPrivateFieldGet(this, _AssistantStream_messageSnapshot, "f"));
-                            break;
-                        case 'text':
-                            this._emit('textDone', currentContent.text, __classPrivateFieldGet(this, _AssistantStream_messageSnapshot, "f"));
-                            break;
-                    }
-                }
-            }
-            if (__classPrivateFieldGet(this, _AssistantStream_messageSnapshot, "f")) {
-                this._emit('messageDone', event.data);
-            }
-            __classPrivateFieldSet(this, _AssistantStream_messageSnapshot, undefined, "f");
-    }
-}, _AssistantStream_handleRunStep = function _AssistantStream_handleRunStep(event) {
-    const accumulatedRunStep = __classPrivateFieldGet(this, _AssistantStream_instances, "m", _AssistantStream_accumulateRunStep).call(this, event);
-    __classPrivateFieldSet(this, _AssistantStream_currentRunStepSnapshot, accumulatedRunStep, "f");
-    switch (event.event) {
-        case 'thread.run.step.created':
-            this._emit('runStepCreated', event.data);
-            break;
-        case 'thread.run.step.delta':
-            const delta = event.data.delta;
-            if (delta.step_details &&
-                delta.step_details.type == 'tool_calls' &&
-                delta.step_details.tool_calls &&
-                accumulatedRunStep.step_details.type == 'tool_calls') {
-                for (const toolCall of delta.step_details.tool_calls) {
-                    if (toolCall.index == __classPrivateFieldGet(this, _AssistantStream_currentToolCallIndex, "f")) {
-                        this._emit('toolCallDelta', toolCall, accumulatedRunStep.step_details.tool_calls[toolCall.index]);
-                    }
-                    else {
-                        if (__classPrivateFieldGet(this, _AssistantStream_currentToolCall, "f")) {
-                            this._emit('toolCallDone', __classPrivateFieldGet(this, _AssistantStream_currentToolCall, "f"));
-                        }
-                        __classPrivateFieldSet(this, _AssistantStream_currentToolCallIndex, toolCall.index, "f");
-                        __classPrivateFieldSet(this, _AssistantStream_currentToolCall, accumulatedRunStep.step_details.tool_calls[toolCall.index], "f");
-                        if (__classPrivateFieldGet(this, _AssistantStream_currentToolCall, "f"))
-                            this._emit('toolCallCreated', __classPrivateFieldGet(this, _AssistantStream_currentToolCall, "f"));
-                    }
-                }
-            }
-            this._emit('runStepDelta', event.data.delta, accumulatedRunStep);
-            break;
-        case 'thread.run.step.completed':
-        case 'thread.run.step.failed':
-        case 'thread.run.step.cancelled':
-        case 'thread.run.step.expired':
-            __classPrivateFieldSet(this, _AssistantStream_currentRunStepSnapshot, undefined, "f");
-            const details = event.data.step_details;
-            if (details.type == 'tool_calls') {
-                if (__classPrivateFieldGet(this, _AssistantStream_currentToolCall, "f")) {
-                    this._emit('toolCallDone', __classPrivateFieldGet(this, _AssistantStream_currentToolCall, "f"));
-                    __classPrivateFieldSet(this, _AssistantStream_currentToolCall, undefined, "f");
-                }
-            }
-            this._emit('runStepDone', event.data, accumulatedRunStep);
-            break;
-    }
-}, _AssistantStream_handleEvent = function _AssistantStream_handleEvent(event) {
-    __classPrivateFieldGet(this, _AssistantStream_events, "f").push(event);
-    this._emit('event', event);
-}, _AssistantStream_accumulateRunStep = function _AssistantStream_accumulateRunStep(event) {
-    switch (event.event) {
-        case 'thread.run.step.created':
-            __classPrivateFieldGet(this, _AssistantStream_runStepSnapshots, "f")[event.data.id] = event.data;
-            return event.data;
-        case 'thread.run.step.delta':
-            let snapshot = __classPrivateFieldGet(this, _AssistantStream_runStepSnapshots, "f")[event.data.id];
-            if (!snapshot) {
-                throw Error('Received a RunStepDelta before creation of a snapshot');
-            }
-            let data = event.data;
-            if (data.delta) {
-                const accumulated = AssistantStream.accumulateDelta(snapshot, data.delta);
-                __classPrivateFieldGet(this, _AssistantStream_runStepSnapshots, "f")[event.data.id] = accumulated;
-            }
-            return __classPrivateFieldGet(this, _AssistantStream_runStepSnapshots, "f")[event.data.id];
-        case 'thread.run.step.completed':
-        case 'thread.run.step.failed':
-        case 'thread.run.step.cancelled':
-        case 'thread.run.step.expired':
-        case 'thread.run.step.in_progress':
-            __classPrivateFieldGet(this, _AssistantStream_runStepSnapshots, "f")[event.data.id] = event.data;
-            break;
-    }
-    if (__classPrivateFieldGet(this, _AssistantStream_runStepSnapshots, "f")[event.data.id])
-        return __classPrivateFieldGet(this, _AssistantStream_runStepSnapshots, "f")[event.data.id];
-    throw new Error('No snapshot available');
-}, _AssistantStream_accumulateMessage = function _AssistantStream_accumulateMessage(event, snapshot) {
-    let newContent = [];
-    switch (event.event) {
-        case 'thread.message.created':
-            //On creation the snapshot is just the initial message
-            return [event.data, newContent];
-        case 'thread.message.delta':
-            if (!snapshot) {
-                throw Error('Received a delta with no existing snapshot (there should be one from message creation)');
-            }
-            let data = event.data;
-            //If this delta does not have content, nothing to process
-            if (data.delta.content) {
-                for (const contentElement of data.delta.content) {
-                    if (contentElement.index in snapshot.content) {
-                        let currentContent = snapshot.content[contentElement.index];
-                        snapshot.content[contentElement.index] = __classPrivateFieldGet(this, _AssistantStream_instances, "m", _AssistantStream_accumulateContent).call(this, contentElement, currentContent);
-                    }
-                    else {
-                        snapshot.content[contentElement.index] = contentElement;
-                        // This is a new element
-                        newContent.push(contentElement);
-                    }
-                }
-            }
-            return [snapshot, newContent];
-        case 'thread.message.in_progress':
-        case 'thread.message.completed':
-        case 'thread.message.incomplete':
-            //No changes on other thread events
-            if (snapshot) {
-                return [snapshot, newContent];
-            }
-            else {
-                throw Error('Received thread message event with no existing snapshot');
-            }
-    }
-    throw Error('Tried to accumulate a non-message event');
-}, _AssistantStream_accumulateContent = function _AssistantStream_accumulateContent(contentElement, currentContent) {
-    return AssistantStream.accumulateDelta(currentContent, contentElement);
-}, _AssistantStream_handleRun = function _AssistantStream_handleRun(event) {
-    __classPrivateFieldSet(this, _AssistantStream_currentRunSnapshot, event.data, "f");
-    switch (event.event) {
-        case 'thread.run.created':
-            break;
-        case 'thread.run.queued':
-            break;
-        case 'thread.run.in_progress':
-            break;
-        case 'thread.run.requires_action':
-        case 'thread.run.cancelled':
-        case 'thread.run.failed':
-        case 'thread.run.completed':
-        case 'thread.run.expired':
-            __classPrivateFieldSet(this, _AssistantStream_finalRun, event.data, "f");
-            if (__classPrivateFieldGet(this, _AssistantStream_currentToolCall, "f")) {
-                this._emit('toolCallDone', __classPrivateFieldGet(this, _AssistantStream_currentToolCall, "f"));
-                __classPrivateFieldSet(this, _AssistantStream_currentToolCall, undefined, "f");
-            }
-            break;
-    }
-};
-
-// File generated from our OpenAPI spec by Stainless. See CONTRIBUTING.md for details.
-class Messages extends APIResource {
-    /**
-     * Create a message.
-     */
-    create(threadId, body, options) {
-        return this._client.post(`/threads/${threadId}/messages`, {
-            body,
-            ...options,
-            headers: { 'OpenAI-Beta': 'assistants=v2', ...options?.headers },
-        });
-    }
-    /**
-     * Retrieve a message.
-     */
-    retrieve(threadId, messageId, options) {
-        return this._client.get(`/threads/${threadId}/messages/${messageId}`, {
-            ...options,
-            headers: { 'OpenAI-Beta': 'assistants=v2', ...options?.headers },
-        });
-    }
-    /**
-     * Modifies a message.
-     */
-    update(threadId, messageId, body, options) {
-        return this._client.post(`/threads/${threadId}/messages/${messageId}`, {
-            body,
-            ...options,
-            headers: { 'OpenAI-Beta': 'assistants=v2', ...options?.headers },
-        });
-    }
-    list(threadId, query = {}, options) {
-        if (isRequestOptions(query)) {
-            return this.list(threadId, {}, query);
-        }
-        return this._client.getAPIList(`/threads/${threadId}/messages`, MessagesPage, {
-            query,
-            ...options,
-            headers: { 'OpenAI-Beta': 'assistants=v2', ...options?.headers },
-        });
-    }
-    /**
-     * Deletes a message.
-     */
-    del(threadId, messageId, options) {
-        return this._client.delete(`/threads/${threadId}/messages/${messageId}`, {
-            ...options,
-            headers: { 'OpenAI-Beta': 'assistants=v2', ...options?.headers },
-        });
-    }
-}
-class MessagesPage extends CursorPage {
-}
-Messages.MessagesPage = MessagesPage;
-
-// File generated from our OpenAPI spec by Stainless. See CONTRIBUTING.md for details.
-class Steps extends APIResource {
-    retrieve(threadId, runId, stepId, query = {}, options) {
-        if (isRequestOptions(query)) {
-            return this.retrieve(threadId, runId, stepId, {}, query);
-        }
-        return this._client.get(`/threads/${threadId}/runs/${runId}/steps/${stepId}`, {
-            query,
-            ...options,
-            headers: { 'OpenAI-Beta': 'assistants=v2', ...options?.headers },
-        });
-    }
-    list(threadId, runId, query = {}, options) {
-        if (isRequestOptions(query)) {
-            return this.list(threadId, runId, {}, query);
-        }
-        return this._client.getAPIList(`/threads/${threadId}/runs/${runId}/steps`, RunStepsPage, {
-            query,
-            ...options,
-            headers: { 'OpenAI-Beta': 'assistants=v2', ...options?.headers },
-        });
-    }
-}
-class RunStepsPage extends CursorPage {
-}
-Steps.RunStepsPage = RunStepsPage;
-
-// File generated from our OpenAPI spec by Stainless. See CONTRIBUTING.md for details.
-class Runs extends APIResource {
-    constructor() {
-        super(...arguments);
-        this.steps = new Steps(this._client);
-    }
-    create(threadId, params, options) {
-        const { include, ...body } = params;
-        return this._client.post(`/threads/${threadId}/runs`, {
-            query: { include },
-            body,
-            ...options,
-            headers: { 'OpenAI-Beta': 'assistants=v2', ...options?.headers },
-            stream: params.stream ?? false,
-        });
-    }
-    /**
-     * Retrieves a run.
-     */
-    retrieve(threadId, runId, options) {
-        return this._client.get(`/threads/${threadId}/runs/${runId}`, {
-            ...options,
-            headers: { 'OpenAI-Beta': 'assistants=v2', ...options?.headers },
-        });
-    }
-    /**
-     * Modifies a run.
-     */
-    update(threadId, runId, body, options) {
-        return this._client.post(`/threads/${threadId}/runs/${runId}`, {
-            body,
-            ...options,
-            headers: { 'OpenAI-Beta': 'assistants=v2', ...options?.headers },
-        });
-    }
-    list(threadId, query = {}, options) {
-        if (isRequestOptions(query)) {
-            return this.list(threadId, {}, query);
-        }
-        return this._client.getAPIList(`/threads/${threadId}/runs`, RunsPage, {
-            query,
-            ...options,
-            headers: { 'OpenAI-Beta': 'assistants=v2', ...options?.headers },
-        });
-    }
-    /**
-     * Cancels a run that is `in_progress`.
-     */
-    cancel(threadId, runId, options) {
-        return this._client.post(`/threads/${threadId}/runs/${runId}/cancel`, {
-            ...options,
-            headers: { 'OpenAI-Beta': 'assistants=v2', ...options?.headers },
-        });
-    }
-    /**
-     * A helper to create a run an poll for a terminal state. More information on Run
-     * lifecycles can be found here:
-     * https://platform.openai.com/docs/assistants/how-it-works/runs-and-run-steps
-     */
-    async createAndPoll(threadId, body, options) {
-        const run = await this.create(threadId, body, options);
-        return await this.poll(threadId, run.id, options);
-    }
-    /**
-     * Create a Run stream
-     *
-     * @deprecated use `stream` instead
-     */
-    createAndStream(threadId, body, options) {
-        return AssistantStream.createAssistantStream(threadId, this._client.beta.threads.runs, body, options);
-    }
-    /**
-     * A helper to poll a run status until it reaches a terminal state. More
-     * information on Run lifecycles can be found here:
-     * https://platform.openai.com/docs/assistants/how-it-works/runs-and-run-steps
-     */
-    async poll(threadId, runId, options) {
-        const headers = { ...options?.headers, 'X-Stainless-Poll-Helper': 'true' };
-        if (options?.pollIntervalMs) {
-            headers['X-Stainless-Custom-Poll-Interval'] = options.pollIntervalMs.toString();
-        }
-        while (true) {
-            const { data: run, response } = await this.retrieve(threadId, runId, {
-                ...options,
-                headers: { ...options?.headers, ...headers },
-            }).withResponse();
-            switch (run.status) {
-                //If we are in any sort of intermediate state we poll
-                case 'queued':
-                case 'in_progress':
-                case 'cancelling':
-                    let sleepInterval = 5000;
-                    if (options?.pollIntervalMs) {
-                        sleepInterval = options.pollIntervalMs;
-                    }
-                    else {
-                        const headerInterval = response.headers.get('openai-poll-after-ms');
-                        if (headerInterval) {
-                            const headerIntervalMs = parseInt(headerInterval);
-                            if (!isNaN(headerIntervalMs)) {
-                                sleepInterval = headerIntervalMs;
-                            }
-                        }
-                    }
-                    await sleep(sleepInterval);
-                    break;
-                //We return the run in any terminal state.
-                case 'requires_action':
-                case 'incomplete':
-                case 'cancelled':
-                case 'completed':
-                case 'failed':
-                case 'expired':
-                    return run;
-            }
-        }
-    }
-    /**
-     * Create a Run stream
-     */
-    stream(threadId, body, options) {
-        return AssistantStream.createAssistantStream(threadId, this._client.beta.threads.runs, body, options);
-    }
-    submitToolOutputs(threadId, runId, body, options) {
-        return this._client.post(`/threads/${threadId}/runs/${runId}/submit_tool_outputs`, {
-            body,
-            ...options,
-            headers: { 'OpenAI-Beta': 'assistants=v2', ...options?.headers },
-            stream: body.stream ?? false,
-        });
-    }
-    /**
-     * A helper to submit a tool output to a run and poll for a terminal run state.
-     * More information on Run lifecycles can be found here:
-     * https://platform.openai.com/docs/assistants/how-it-works/runs-and-run-steps
-     */
-    async submitToolOutputsAndPoll(threadId, runId, body, options) {
-        const run = await this.submitToolOutputs(threadId, runId, body, options);
-        return await this.poll(threadId, run.id, options);
-    }
-    /**
-     * Submit the tool outputs from a previous run and stream the run to a terminal
-     * state. More information on Run lifecycles can be found here:
-     * https://platform.openai.com/docs/assistants/how-it-works/runs-and-run-steps
-     */
-    submitToolOutputsStream(threadId, runId, body, options) {
-        return AssistantStream.createToolAssistantStream(threadId, runId, this._client.beta.threads.runs, body, options);
-    }
-}
-class RunsPage extends CursorPage {
-}
-Runs.RunsPage = RunsPage;
-Runs.Steps = Steps;
-Runs.RunStepsPage = RunStepsPage;
-
-// File generated from our OpenAPI spec by Stainless. See CONTRIBUTING.md for details.
-class Threads extends APIResource {
-    constructor() {
-        super(...arguments);
-        this.runs = new Runs(this._client);
-        this.messages = new Messages(this._client);
-    }
-    create(body = {}, options) {
-        if (isRequestOptions(body)) {
-            return this.create({}, body);
-        }
-        return this._client.post('/threads', {
-            body,
-            ...options,
-            headers: { 'OpenAI-Beta': 'assistants=v2', ...options?.headers },
-        });
-    }
-    /**
-     * Retrieves a thread.
-     */
-    retrieve(threadId, options) {
-        return this._client.get(`/threads/${threadId}`, {
-            ...options,
-            headers: { 'OpenAI-Beta': 'assistants=v2', ...options?.headers },
-        });
-    }
-    /**
-     * Modifies a thread.
-     */
-    update(threadId, body, options) {
-        return this._client.post(`/threads/${threadId}`, {
-            body,
-            ...options,
-            headers: { 'OpenAI-Beta': 'assistants=v2', ...options?.headers },
-        });
-    }
-    /**
-     * Delete a thread.
-     */
-    del(threadId, options) {
-        return this._client.delete(`/threads/${threadId}`, {
-            ...options,
-            headers: { 'OpenAI-Beta': 'assistants=v2', ...options?.headers },
-        });
-    }
-    createAndRun(body, options) {
-        return this._client.post('/threads/runs', {
-            body,
-            ...options,
-            headers: { 'OpenAI-Beta': 'assistants=v2', ...options?.headers },
-            stream: body.stream ?? false,
-        });
-    }
-    /**
-     * A helper to create a thread, start a run and then poll for a terminal state.
-     * More information on Run lifecycles can be found here:
-     * https://platform.openai.com/docs/assistants/how-it-works/runs-and-run-steps
-     */
-    async createAndRunPoll(body, options) {
-        const run = await this.createAndRun(body, options);
-        return await this.runs.poll(run.thread_id, run.id, options);
-    }
-    /**
-     * Create a thread and stream the run back
-     */
-    createAndRunStream(body, options) {
-        return AssistantStream.createThreadAssistantStream(body, this._client.beta.threads, options);
-    }
-}
-Threads.Runs = Runs;
-Threads.RunsPage = RunsPage;
-Threads.Messages = Messages;
-Threads.MessagesPage = MessagesPage;
-
-/**
- * Like `Promise.allSettled()` but throws an error if any promises are rejected.
- */
-const allSettledWithThrow = async (promises) => {
-    const results = await Promise.allSettled(promises);
-    const rejected = results.filter((result) => result.status === 'rejected');
-    if (rejected.length) {
-        for (const result of rejected) {
-            console.error(result.reason);
-        }
-        throw new Error(`${rejected.length} promise(s) failed - see the above errors`);
-    }
-    // Note: TS was complaining about using `.filter().map()` here for some reason
-    const values = [];
-    for (const result of results) {
-        if (result.status === 'fulfilled') {
-            values.push(result.value);
-        }
-    }
-    return values;
-};
-
-// File generated from our OpenAPI spec by Stainless. See CONTRIBUTING.md for details.
-let Files$1 = class Files extends APIResource {
-    /**
-     * Create a vector store file by attaching a
-     * [File](https://platform.openai.com/docs/api-reference/files) to a
-     * [vector store](https://platform.openai.com/docs/api-reference/vector-stores/object).
-     */
-    create(vectorStoreId, body, options) {
-        return this._client.post(`/vector_stores/${vectorStoreId}/files`, {
-            body,
-            ...options,
-            headers: { 'OpenAI-Beta': 'assistants=v2', ...options?.headers },
-        });
-    }
-    /**
-     * Retrieves a vector store file.
-     */
-    retrieve(vectorStoreId, fileId, options) {
-        return this._client.get(`/vector_stores/${vectorStoreId}/files/${fileId}`, {
-            ...options,
-            headers: { 'OpenAI-Beta': 'assistants=v2', ...options?.headers },
-        });
-    }
-    list(vectorStoreId, query = {}, options) {
-        if (isRequestOptions(query)) {
-            return this.list(vectorStoreId, {}, query);
-        }
-        return this._client.getAPIList(`/vector_stores/${vectorStoreId}/files`, VectorStoreFilesPage, {
-            query,
-            ...options,
-            headers: { 'OpenAI-Beta': 'assistants=v2', ...options?.headers },
-        });
-    }
-    /**
-     * Delete a vector store file. This will remove the file from the vector store but
-     * the file itself will not be deleted. To delete the file, use the
-     * [delete file](https://platform.openai.com/docs/api-reference/files/delete)
-     * endpoint.
-     */
-    del(vectorStoreId, fileId, options) {
-        return this._client.delete(`/vector_stores/${vectorStoreId}/files/${fileId}`, {
-            ...options,
-            headers: { 'OpenAI-Beta': 'assistants=v2', ...options?.headers },
-        });
-    }
-    /**
-     * Attach a file to the given vector store and wait for it to be processed.
-     */
-    async createAndPoll(vectorStoreId, body, options) {
-        const file = await this.create(vectorStoreId, body, options);
-        return await this.poll(vectorStoreId, file.id, options);
-    }
-    /**
-     * Wait for the vector store file to finish processing.
-     *
-     * Note: this will return even if the file failed to process, you need to check
-     * file.last_error and file.status to handle these cases
-     */
-    async poll(vectorStoreId, fileId, options) {
-        const headers = { ...options?.headers, 'X-Stainless-Poll-Helper': 'true' };
-        if (options?.pollIntervalMs) {
-            headers['X-Stainless-Custom-Poll-Interval'] = options.pollIntervalMs.toString();
-        }
-        while (true) {
-            const fileResponse = await this.retrieve(vectorStoreId, fileId, {
-                ...options,
-                headers,
-            }).withResponse();
-            const file = fileResponse.data;
-            switch (file.status) {
-                case 'in_progress':
-                    let sleepInterval = 5000;
-                    if (options?.pollIntervalMs) {
-                        sleepInterval = options.pollIntervalMs;
-                    }
-                    else {
-                        const headerInterval = fileResponse.response.headers.get('openai-poll-after-ms');
-                        if (headerInterval) {
-                            const headerIntervalMs = parseInt(headerInterval);
-                            if (!isNaN(headerIntervalMs)) {
-                                sleepInterval = headerIntervalMs;
-                            }
-                        }
-                    }
-                    await sleep(sleepInterval);
-                    break;
-                case 'failed':
-                case 'completed':
-                    return file;
-            }
-        }
-    }
-    /**
-     * Upload a file to the `files` API and then attach it to the given vector store.
-     *
-     * Note the file will be asynchronously processed (you can use the alternative
-     * polling helper method to wait for processing to complete).
-     */
-    async upload(vectorStoreId, file, options) {
-        const fileInfo = await this._client.files.create({ file: file, purpose: 'assistants' }, options);
-        return this.create(vectorStoreId, { file_id: fileInfo.id }, options);
-    }
-    /**
-     * Add a file to a vector store and poll until processing is complete.
-     */
-    async uploadAndPoll(vectorStoreId, file, options) {
-        const fileInfo = await this.upload(vectorStoreId, file, options);
-        return await this.poll(vectorStoreId, fileInfo.id, options);
-    }
-};
-class VectorStoreFilesPage extends CursorPage {
-}
-Files$1.VectorStoreFilesPage = VectorStoreFilesPage;
-
-// File generated from our OpenAPI spec by Stainless. See CONTRIBUTING.md for details.
-class FileBatches extends APIResource {
-    /**
-     * Create a vector store file batch.
-     */
-    create(vectorStoreId, body, options) {
-        return this._client.post(`/vector_stores/${vectorStoreId}/file_batches`, {
-            body,
-            ...options,
-            headers: { 'OpenAI-Beta': 'assistants=v2', ...options?.headers },
-        });
-    }
-    /**
-     * Retrieves a vector store file batch.
-     */
-    retrieve(vectorStoreId, batchId, options) {
-        return this._client.get(`/vector_stores/${vectorStoreId}/file_batches/${batchId}`, {
-            ...options,
-            headers: { 'OpenAI-Beta': 'assistants=v2', ...options?.headers },
-        });
-    }
-    /**
-     * Cancel a vector store file batch. This attempts to cancel the processing of
-     * files in this batch as soon as possible.
-     */
-    cancel(vectorStoreId, batchId, options) {
-        return this._client.post(`/vector_stores/${vectorStoreId}/file_batches/${batchId}/cancel`, {
-            ...options,
-            headers: { 'OpenAI-Beta': 'assistants=v2', ...options?.headers },
-        });
-    }
-    /**
-     * Create a vector store batch and poll until all files have been processed.
-     */
-    async createAndPoll(vectorStoreId, body, options) {
-        const batch = await this.create(vectorStoreId, body);
-        return await this.poll(vectorStoreId, batch.id, options);
-    }
-    listFiles(vectorStoreId, batchId, query = {}, options) {
-        if (isRequestOptions(query)) {
-            return this.listFiles(vectorStoreId, batchId, {}, query);
-        }
-        return this._client.getAPIList(`/vector_stores/${vectorStoreId}/file_batches/${batchId}/files`, VectorStoreFilesPage, { query, ...options, headers: { 'OpenAI-Beta': 'assistants=v2', ...options?.headers } });
-    }
-    /**
-     * Wait for the given file batch to be processed.
-     *
-     * Note: this will return even if one of the files failed to process, you need to
-     * check batch.file_counts.failed_count to handle this case.
-     */
-    async poll(vectorStoreId, batchId, options) {
-        const headers = { ...options?.headers, 'X-Stainless-Poll-Helper': 'true' };
-        if (options?.pollIntervalMs) {
-            headers['X-Stainless-Custom-Poll-Interval'] = options.pollIntervalMs.toString();
-        }
-        while (true) {
-            const { data: batch, response } = await this.retrieve(vectorStoreId, batchId, {
-                ...options,
-                headers,
-            }).withResponse();
-            switch (batch.status) {
-                case 'in_progress':
-                    let sleepInterval = 5000;
-                    if (options?.pollIntervalMs) {
-                        sleepInterval = options.pollIntervalMs;
-                    }
-                    else {
-                        const headerInterval = response.headers.get('openai-poll-after-ms');
-                        if (headerInterval) {
-                            const headerIntervalMs = parseInt(headerInterval);
-                            if (!isNaN(headerIntervalMs)) {
-                                sleepInterval = headerIntervalMs;
-                            }
-                        }
-                    }
-                    await sleep(sleepInterval);
-                    break;
-                case 'failed':
-                case 'cancelled':
-                case 'completed':
-                    return batch;
-            }
-        }
-    }
-    /**
-     * Uploads the given files concurrently and then creates a vector store file batch.
-     *
-     * The concurrency limit is configurable using the `maxConcurrency` parameter.
-     */
-    async uploadAndPoll(vectorStoreId, { files, fileIds = [] }, options) {
-        if (files == null || files.length == 0) {
-            throw new Error(`No \`files\` provided to process. If you've already uploaded files you should use \`.createAndPoll()\` instead`);
-        }
-        const configuredConcurrency = options?.maxConcurrency ?? 5;
-        // We cap the number of workers at the number of files (so we don't start any unnecessary workers)
-        const concurrencyLimit = Math.min(configuredConcurrency, files.length);
-        const client = this._client;
-        const fileIterator = files.values();
-        const allFileIds = [...fileIds];
-        // This code is based on this design. The libraries don't accommodate our environment limits.
-        // https://stackoverflow.com/questions/40639432/what-is-the-best-way-to-limit-concurrency-when-using-es6s-promise-all
-        async function processFiles(iterator) {
-            for (let item of iterator) {
-                const fileObj = await client.files.create({ file: item, purpose: 'assistants' }, options);
-                allFileIds.push(fileObj.id);
-            }
-        }
-        // Start workers to process results
-        const workers = Array(concurrencyLimit).fill(fileIterator).map(processFiles);
-        // Wait for all processing to complete.
-        await allSettledWithThrow(workers);
-        return await this.createAndPoll(vectorStoreId, {
-            file_ids: allFileIds,
-        });
-    }
-}
-
-// File generated from our OpenAPI spec by Stainless. See CONTRIBUTING.md for details.
-class VectorStores extends APIResource {
-    constructor() {
-        super(...arguments);
-        this.files = new Files$1(this._client);
-        this.fileBatches = new FileBatches(this._client);
-    }
-    /**
-     * Create a vector store.
-     */
-    create(body, options) {
-        return this._client.post('/vector_stores', {
-            body,
-            ...options,
-            headers: { 'OpenAI-Beta': 'assistants=v2', ...options?.headers },
-        });
-    }
-    /**
-     * Retrieves a vector store.
-     */
-    retrieve(vectorStoreId, options) {
-        return this._client.get(`/vector_stores/${vectorStoreId}`, {
-            ...options,
-            headers: { 'OpenAI-Beta': 'assistants=v2', ...options?.headers },
-        });
-    }
-    /**
-     * Modifies a vector store.
-     */
-    update(vectorStoreId, body, options) {
-        return this._client.post(`/vector_stores/${vectorStoreId}`, {
-            body,
-            ...options,
-            headers: { 'OpenAI-Beta': 'assistants=v2', ...options?.headers },
-        });
-    }
-    list(query = {}, options) {
-        if (isRequestOptions(query)) {
-            return this.list({}, query);
-        }
-        return this._client.getAPIList('/vector_stores', VectorStoresPage, {
-            query,
-            ...options,
-            headers: { 'OpenAI-Beta': 'assistants=v2', ...options?.headers },
-        });
-    }
-    /**
-     * Delete a vector store.
-     */
-    del(vectorStoreId, options) {
-        return this._client.delete(`/vector_stores/${vectorStoreId}`, {
-            ...options,
-            headers: { 'OpenAI-Beta': 'assistants=v2', ...options?.headers },
-        });
-    }
-}
-class VectorStoresPage extends CursorPage {
-}
-VectorStores.VectorStoresPage = VectorStoresPage;
-VectorStores.Files = Files$1;
-VectorStores.VectorStoreFilesPage = VectorStoreFilesPage;
-VectorStores.FileBatches = FileBatches;
-
-// File generated from our OpenAPI spec by Stainless. See CONTRIBUTING.md for details.
-class Beta extends APIResource {
-    constructor() {
-        super(...arguments);
-        this.realtime = new Realtime(this._client);
-        this.vectorStores = new VectorStores(this._client);
-        this.chat = new Chat$1(this._client);
-        this.assistants = new Assistants(this._client);
-        this.threads = new Threads(this._client);
-    }
-}
-Beta.Realtime = Realtime;
-Beta.VectorStores = VectorStores;
-Beta.VectorStoresPage = VectorStoresPage;
-Beta.Assistants = Assistants;
-Beta.AssistantsPage = AssistantsPage;
-Beta.Threads = Threads;
-
-// File generated from our OpenAPI spec by Stainless. See CONTRIBUTING.md for details.
-class Completions extends APIResource {
-    create(body, options) {
-        return this._client.post('/completions', { body, ...options, stream: body.stream ?? false });
-    }
-}
-
-// File generated from our OpenAPI spec by Stainless. See CONTRIBUTING.md for details.
-class Embeddings extends APIResource {
-    /**
-     * Creates an embedding vector representing the input text.
-     */
-    create(body, options) {
-        return this._client.post('/embeddings', { body, ...options });
-    }
-}
-
-// File generated from our OpenAPI spec by Stainless. See CONTRIBUTING.md for details.
-class Files extends APIResource {
-    /**
-     * Upload a file that can be used across various endpoints. Individual files can be
-     * up to 512 MB, and the size of all files uploaded by one organization can be up
-     * to 100 GB.
-     *
-     * The Assistants API supports files up to 2 million tokens and of specific file
-     * types. See the
-     * [Assistants Tools guide](https://platform.openai.com/docs/assistants/tools) for
-     * details.
-     *
-     * The Fine-tuning API only supports `.jsonl` files. The input also has certain
-     * required formats for fine-tuning
-     * [chat](https://platform.openai.com/docs/api-reference/fine-tuning/chat-input) or
-     * [completions](https://platform.openai.com/docs/api-reference/fine-tuning/completions-input)
-     * models.
-     *
-     * The Batch API only supports `.jsonl` files up to 200 MB in size. The input also
-     * has a specific required
-     * [format](https://platform.openai.com/docs/api-reference/batch/request-input).
-     *
-     * Please [contact us](https://help.openai.com/) if you need to increase these
-     * storage limits.
-     */
-    create(body, options) {
-        return this._client.post('/files', multipartFormRequestOptions({ body, ...options }));
-    }
-    /**
-     * Returns information about a specific file.
-     */
-    retrieve(fileId, options) {
-        return this._client.get(`/files/${fileId}`, options);
-    }
-    list(query = {}, options) {
-        if (isRequestOptions(query)) {
-            return this.list({}, query);
-        }
-        return this._client.getAPIList('/files', FileObjectsPage, { query, ...options });
-    }
-    /**
-     * Delete a file.
-     */
-    del(fileId, options) {
-        return this._client.delete(`/files/${fileId}`, options);
-    }
-    /**
-     * Returns the contents of the specified file.
-     */
-    content(fileId, options) {
-        return this._client.get(`/files/${fileId}/content`, {
-            ...options,
-            headers: { Accept: 'application/binary', ...options?.headers },
-            __binaryResponse: true,
-        });
-    }
-    /**
-     * Returns the contents of the specified file.
-     *
-     * @deprecated The `.content()` method should be used instead
-     */
-    retrieveContent(fileId, options) {
-        return this._client.get(`/files/${fileId}/content`, options);
-    }
-    /**
-     * Waits for the given file to be processed, default timeout is 30 mins.
-     */
-    async waitForProcessing(id, { pollInterval = 5000, maxWait = 30 * 60 * 1000 } = {}) {
-        const TERMINAL_STATES = new Set(['processed', 'error', 'deleted']);
-        const start = Date.now();
-        let file = await this.retrieve(id);
-        while (!file.status || !TERMINAL_STATES.has(file.status)) {
-            await sleep(pollInterval);
-            file = await this.retrieve(id);
-            if (Date.now() - start > maxWait) {
-                throw new APIConnectionTimeoutError({
-                    message: `Giving up on waiting for file ${id} to finish processing after ${maxWait} milliseconds.`,
-                });
-            }
-        }
-        return file;
-    }
-}
-class FileObjectsPage extends CursorPage {
-}
-Files.FileObjectsPage = FileObjectsPage;
-
-// File generated from our OpenAPI spec by Stainless. See CONTRIBUTING.md for details.
-class Checkpoints extends APIResource {
-    list(fineTuningJobId, query = {}, options) {
-        if (isRequestOptions(query)) {
-            return this.list(fineTuningJobId, {}, query);
-        }
-        return this._client.getAPIList(`/fine_tuning/jobs/${fineTuningJobId}/checkpoints`, FineTuningJobCheckpointsPage, { query, ...options });
-    }
-}
-class FineTuningJobCheckpointsPage extends CursorPage {
-}
-Checkpoints.FineTuningJobCheckpointsPage = FineTuningJobCheckpointsPage;
-
-// File generated from our OpenAPI spec by Stainless. See CONTRIBUTING.md for details.
-class Jobs extends APIResource {
-    constructor() {
-        super(...arguments);
-        this.checkpoints = new Checkpoints(this._client);
-    }
-    /**
-     * Creates a fine-tuning job which begins the process of creating a new model from
-     * a given dataset.
-     *
-     * Response includes details of the enqueued job including job status and the name
-     * of the fine-tuned models once complete.
-     *
-     * [Learn more about fine-tuning](https://platform.openai.com/docs/guides/fine-tuning)
-     */
-    create(body, options) {
-        return this._client.post('/fine_tuning/jobs', { body, ...options });
-    }
-    /**
-     * Get info about a fine-tuning job.
-     *
-     * [Learn more about fine-tuning](https://platform.openai.com/docs/guides/fine-tuning)
-     */
-    retrieve(fineTuningJobId, options) {
-        return this._client.get(`/fine_tuning/jobs/${fineTuningJobId}`, options);
-    }
-    list(query = {}, options) {
-        if (isRequestOptions(query)) {
-            return this.list({}, query);
-        }
-        return this._client.getAPIList('/fine_tuning/jobs', FineTuningJobsPage, { query, ...options });
-    }
-    /**
-     * Immediately cancel a fine-tune job.
-     */
-    cancel(fineTuningJobId, options) {
-        return this._client.post(`/fine_tuning/jobs/${fineTuningJobId}/cancel`, options);
-    }
-    listEvents(fineTuningJobId, query = {}, options) {
-        if (isRequestOptions(query)) {
-            return this.listEvents(fineTuningJobId, {}, query);
-        }
-        return this._client.getAPIList(`/fine_tuning/jobs/${fineTuningJobId}/events`, FineTuningJobEventsPage, {
-            query,
-            ...options,
-        });
-    }
-}
-class FineTuningJobsPage extends CursorPage {
-}
-class FineTuningJobEventsPage extends CursorPage {
-}
-Jobs.FineTuningJobsPage = FineTuningJobsPage;
-Jobs.FineTuningJobEventsPage = FineTuningJobEventsPage;
-Jobs.Checkpoints = Checkpoints;
-Jobs.FineTuningJobCheckpointsPage = FineTuningJobCheckpointsPage;
-
-// File generated from our OpenAPI spec by Stainless. See CONTRIBUTING.md for details.
-class FineTuning extends APIResource {
-    constructor() {
-        super(...arguments);
-        this.jobs = new Jobs(this._client);
-    }
-}
-FineTuning.Jobs = Jobs;
-FineTuning.FineTuningJobsPage = FineTuningJobsPage;
-FineTuning.FineTuningJobEventsPage = FineTuningJobEventsPage;
-
-// File generated from our OpenAPI spec by Stainless. See CONTRIBUTING.md for details.
-class Images extends APIResource {
-    /**
-     * Creates a variation of a given image.
-     */
-    createVariation(body, options) {
-        return this._client.post('/images/variations', multipartFormRequestOptions({ body, ...options }));
-    }
-    /**
-     * Creates an edited or extended image given an original image and a prompt.
-     */
-    edit(body, options) {
-        return this._client.post('/images/edits', multipartFormRequestOptions({ body, ...options }));
-    }
-    /**
-     * Creates an image given a prompt.
-     */
-    generate(body, options) {
-        return this._client.post('/images/generations', { body, ...options });
-    }
-}
-
-// File generated from our OpenAPI spec by Stainless. See CONTRIBUTING.md for details.
-class Models extends APIResource {
-    /**
-     * Retrieves a model instance, providing basic information about the model such as
-     * the owner and permissioning.
-     */
-    retrieve(model, options) {
-        return this._client.get(`/models/${model}`, options);
-    }
-    /**
-     * Lists the currently available models, and provides basic information about each
-     * one such as the owner and availability.
-     */
-    list(options) {
-        return this._client.getAPIList('/models', ModelsPage, options);
-    }
-    /**
-     * Delete a fine-tuned model. You must have the Owner role in your organization to
-     * delete a model.
-     */
-    del(model, options) {
-        return this._client.delete(`/models/${model}`, options);
-    }
-}
-/**
- * Note: no pagination actually occurs yet, this is for forwards-compatibility.
- */
-class ModelsPage extends Page {
-}
-Models.ModelsPage = ModelsPage;
-
-// File generated from our OpenAPI spec by Stainless. See CONTRIBUTING.md for details.
-class Moderations extends APIResource {
-    /**
-     * Classifies if text and/or image inputs are potentially harmful. Learn more in
-     * the [moderation guide](https://platform.openai.com/docs/guides/moderation).
-     */
-    create(body, options) {
-        return this._client.post('/moderations', { body, ...options });
-    }
-}
-
-// File generated from our OpenAPI spec by Stainless. See CONTRIBUTING.md for details.
-class Parts extends APIResource {
-    /**
-     * Adds a
-     * [Part](https://platform.openai.com/docs/api-reference/uploads/part-object) to an
-     * [Upload](https://platform.openai.com/docs/api-reference/uploads/object) object.
-     * A Part represents a chunk of bytes from the file you are trying to upload.
-     *
-     * Each Part can be at most 64 MB, and you can add Parts until you hit the Upload
-     * maximum of 8 GB.
-     *
-     * It is possible to add multiple Parts in parallel. You can decide the intended
-     * order of the Parts when you
-     * [complete the Upload](https://platform.openai.com/docs/api-reference/uploads/complete).
-     */
-    create(uploadId, body, options) {
-        return this._client.post(`/uploads/${uploadId}/parts`, multipartFormRequestOptions({ body, ...options }));
-    }
-}
-
-// File generated from our OpenAPI spec by Stainless. See CONTRIBUTING.md for details.
-class Uploads extends APIResource {
-    constructor() {
-        super(...arguments);
-        this.parts = new Parts(this._client);
-    }
-    /**
-     * Creates an intermediate
-     * [Upload](https://platform.openai.com/docs/api-reference/uploads/object) object
-     * that you can add
-     * [Parts](https://platform.openai.com/docs/api-reference/uploads/part-object) to.
-     * Currently, an Upload can accept at most 8 GB in total and expires after an hour
-     * after you create it.
-     *
-     * Once you complete the Upload, we will create a
-     * [File](https://platform.openai.com/docs/api-reference/files/object) object that
-     * contains all the parts you uploaded. This File is usable in the rest of our
-     * platform as a regular File object.
-     *
-     * For certain `purpose`s, the correct `mime_type` must be specified. Please refer
-     * to documentation for the supported MIME types for your use case:
-     *
-     * - [Assistants](https://platform.openai.com/docs/assistants/tools/file-search#supported-files)
-     *
-     * For guidance on the proper filename extensions for each purpose, please follow
-     * the documentation on
-     * [creating a File](https://platform.openai.com/docs/api-reference/files/create).
-     */
-    create(body, options) {
-        return this._client.post('/uploads', { body, ...options });
-    }
-    /**
-     * Cancels the Upload. No Parts may be added after an Upload is cancelled.
-     */
-    cancel(uploadId, options) {
-        return this._client.post(`/uploads/${uploadId}/cancel`, options);
-    }
-    /**
-     * Completes the
-     * [Upload](https://platform.openai.com/docs/api-reference/uploads/object).
-     *
-     * Within the returned Upload object, there is a nested
-     * [File](https://platform.openai.com/docs/api-reference/files/object) object that
-     * is ready to use in the rest of the platform.
-     *
-     * You can specify the order of the Parts by passing in an ordered list of the Part
-     * IDs.
-     *
-     * The number of bytes uploaded upon completion must match the number of bytes
-     * initially specified when creating the Upload object. No Parts may be added after
-     * an Upload is completed.
-     */
-    complete(uploadId, body, options) {
-        return this._client.post(`/uploads/${uploadId}/complete`, { body, ...options });
-    }
-}
-Uploads.Parts = Parts;
-
-// File generated from our OpenAPI spec by Stainless. See CONTRIBUTING.md for details.
-var _a;
-/**
- * API Client for interfacing with the OpenAI API.
- */
-class OpenAI extends APIClient {
-    /**
-     * API Client for interfacing with the OpenAI API.
-     *
-     * @param {string | undefined} [opts.apiKey=process.env['OPENAI_API_KEY'] ?? undefined]
-     * @param {string | null | undefined} [opts.organization=process.env['OPENAI_ORG_ID'] ?? null]
-     * @param {string | null | undefined} [opts.project=process.env['OPENAI_PROJECT_ID'] ?? null]
-     * @param {string} [opts.baseURL=process.env['OPENAI_BASE_URL'] ?? https://api.openai.com/v1] - Override the default base URL for the API.
-     * @param {number} [opts.timeout=10 minutes] - The maximum amount of time (in milliseconds) the client will wait for a response before timing out.
-     * @param {number} [opts.httpAgent] - An HTTP agent used to manage HTTP(s) connections.
-     * @param {Core.Fetch} [opts.fetch] - Specify a custom `fetch` function implementation.
-     * @param {number} [opts.maxRetries=2] - The maximum number of times the client will retry a request.
-     * @param {Core.Headers} opts.defaultHeaders - Default headers to include with every request to the API.
-     * @param {Core.DefaultQuery} opts.defaultQuery - Default query parameters to include with every request to the API.
-     * @param {boolean} [opts.dangerouslyAllowBrowser=false] - By default, client-side use of this library is not allowed, as it risks exposing your secret API credentials to attackers.
-     */
-    constructor({ baseURL = readEnv('OPENAI_BASE_URL'), apiKey = readEnv('OPENAI_API_KEY'), organization = readEnv('OPENAI_ORG_ID') ?? null, project = readEnv('OPENAI_PROJECT_ID') ?? null, ...opts } = {}) {
-        if (apiKey === undefined) {
-            throw new OpenAIError("The OPENAI_API_KEY environment variable is missing or empty; either provide it, or instantiate the OpenAI client with an apiKey option, like new OpenAI({ apiKey: 'My API Key' }).");
-        }
-        const options = {
-            apiKey,
-            organization,
-            project,
-            ...opts,
-            baseURL: baseURL || `https://api.openai.com/v1`,
-        };
-        if (!options.dangerouslyAllowBrowser && isRunningInBrowser()) {
-            throw new OpenAIError("It looks like you're running in a browser-like environment.\n\nThis is disabled by default, as it risks exposing your secret API credentials to attackers.\nIf you understand the risks and have appropriate mitigations in place,\nyou can set the `dangerouslyAllowBrowser` option to `true`, e.g.,\n\nnew OpenAI({ apiKey, dangerouslyAllowBrowser: true });\n\nhttps://help.openai.com/en/articles/5112595-best-practices-for-api-key-safety\n");
-        }
-        super({
-            baseURL: options.baseURL,
-            timeout: options.timeout ?? 600000 /* 10 minutes */,
-            httpAgent: options.httpAgent,
-            maxRetries: options.maxRetries,
-            fetch: options.fetch,
-        });
-        this.completions = new Completions(this);
-        this.chat = new Chat$2(this);
-        this.embeddings = new Embeddings(this);
-        this.files = new Files(this);
-        this.images = new Images(this);
-        this.audio = new Audio(this);
-        this.moderations = new Moderations(this);
-        this.models = new Models(this);
-        this.fineTuning = new FineTuning(this);
-        this.beta = new Beta(this);
-        this.batches = new Batches(this);
-        this.uploads = new Uploads(this);
-        this._options = options;
-        this.apiKey = apiKey;
-        this.organization = organization;
-        this.project = project;
-    }
-    defaultQuery() {
-        return this._options.defaultQuery;
-    }
-    defaultHeaders(opts) {
-        return {
-            ...super.defaultHeaders(opts),
-            'OpenAI-Organization': this.organization,
-            'OpenAI-Project': this.project,
-            ...this._options.defaultHeaders,
-        };
-    }
-    authHeaders(opts) {
-        return { Authorization: `Bearer ${this.apiKey}` };
-    }
-    stringifyQuery(query) {
-        return stringify(query, { arrayFormat: 'brackets' });
-    }
-}
-_a = OpenAI;
-OpenAI.OpenAI = _a;
-OpenAI.DEFAULT_TIMEOUT = 600000; // 10 minutes
-OpenAI.OpenAIError = OpenAIError;
-OpenAI.APIError = APIError;
-OpenAI.APIConnectionError = APIConnectionError;
-OpenAI.APIConnectionTimeoutError = APIConnectionTimeoutError;
-OpenAI.APIUserAbortError = APIUserAbortError;
-OpenAI.NotFoundError = NotFoundError;
-OpenAI.ConflictError = ConflictError;
-OpenAI.RateLimitError = RateLimitError;
-OpenAI.BadRequestError = BadRequestError;
-OpenAI.AuthenticationError = AuthenticationError;
-OpenAI.InternalServerError = InternalServerError;
-OpenAI.PermissionDeniedError = PermissionDeniedError;
-OpenAI.UnprocessableEntityError = UnprocessableEntityError;
-OpenAI.toFile = toFile;
-OpenAI.fileFromPath = fileFromPath;
-OpenAI.Completions = Completions;
-OpenAI.Chat = Chat$2;
-OpenAI.Embeddings = Embeddings;
-OpenAI.Files = Files;
-OpenAI.FileObjectsPage = FileObjectsPage;
-OpenAI.Images = Images;
-OpenAI.Audio = Audio;
-OpenAI.Moderations = Moderations;
-OpenAI.Models = Models;
-OpenAI.ModelsPage = ModelsPage;
-OpenAI.FineTuning = FineTuning;
-OpenAI.Beta = Beta;
-OpenAI.Batches = Batches;
-OpenAI.BatchesPage = BatchesPage;
-OpenAI.Uploads = Uploads;
-
 var commonjsGlobal = typeof globalThis !== 'undefined' ? globalThis : typeof window !== 'undefined' ? window : typeof global !== 'undefined' ? global : typeof self !== 'undefined' ? self : {};
 
 function getDefaultExportFromCjs (x) {
@@ -32971,9 +27616,9 @@ function requireBeforeAfterHook () {
 
 var beforeAfterHookExports = requireBeforeAfterHook();
 
-const VERSION$d = "9.0.5";
+const VERSION$e = "9.0.5";
 
-const userAgent$1 = `octokit-endpoint.js/${VERSION$d} ${getUserAgent$1()}`;
+const userAgent$1 = `octokit-endpoint.js/${VERSION$e} ${getUserAgent$1()}`;
 const DEFAULTS$1 = {
   method: "GET",
   baseUrl: "https://api.github.com",
@@ -33179,10 +27824,10 @@ function getValues$1(context, operator, key, modifier) {
 }
 function parseUrl$1(template) {
   return {
-    expand: expand$1.bind(null, template)
+    expand: expand$2.bind(null, template)
   };
 }
-function expand$1(template, context) {
+function expand$2(template, context) {
   var operators = ["+", "#", ".", "/", ";", "?", "&"];
   template = template.replace(
     /\{([^\{\}]+)\}|([^\{\}]+)/g,
@@ -33302,7 +27947,7 @@ function withDefaults$5(oldDefaults, newDefaults) {
 
 const endpoint$1 = withDefaults$5(null, DEFAULTS$1);
 
-const VERSION$c = "8.4.0";
+const VERSION$d = "8.4.0";
 
 function isPlainObject$2(value) {
   if (typeof value !== "object" || value === null)
@@ -33645,14 +28290,14 @@ function withDefaults$4(oldEndpoint, newDefaults) {
 
 const request$1 = withDefaults$4(endpoint$1, {
   headers: {
-    "user-agent": `octokit-request.js/${VERSION$c} ${getUserAgent$1()}`
+    "user-agent": `octokit-request.js/${VERSION$d} ${getUserAgent$1()}`
   }
 });
 
 // pkg/dist-src/index.js
 
 // pkg/dist-src/version.js
-var VERSION$b = "7.1.0";
+var VERSION$c = "7.1.0";
 
 // pkg/dist-src/error.js
 function _buildMessageForResponseErrors$1(data) {
@@ -33752,7 +28397,7 @@ function withDefaults$3(request2, newDefaults) {
 // pkg/dist-src/index.js
 withDefaults$3(request$1, {
   headers: {
-    "user-agent": `octokit-graphql.js/${VERSION$b} ${getUserAgent$1()}`
+    "user-agent": `octokit-graphql.js/${VERSION$c} ${getUserAgent$1()}`
   },
   method: "POST",
   url: "/graphql"
@@ -33813,17 +28458,17 @@ const createTokenAuth$1 = function createTokenAuth2(token) {
 // pkg/dist-src/index.js
 
 // pkg/dist-src/version.js
-var VERSION$a = "5.2.0";
+var VERSION$b = "5.2.0";
 
 // pkg/dist-src/index.js
 var noop$1 = () => {
 };
 var consoleWarn$1 = console.warn.bind(console);
 var consoleError$1 = console.error.bind(console);
-var userAgentTrail$1 = `octokit-core.js/${VERSION$a} ${getUserAgent$1()}`;
+var userAgentTrail$1 = `octokit-core.js/${VERSION$b} ${getUserAgent$1()}`;
 var Octokit$2 = class Octokit {
   static {
-    this.VERSION = VERSION$a;
+    this.VERSION = VERSION$b;
   }
   static defaults(defaults) {
     const OctokitWithDefaults = class extends this {
@@ -33942,13 +28587,13 @@ var Octokit$2 = class Octokit {
 };
 
 var distWeb$1 = /*#__PURE__*/Object.freeze({
-    __proto__: null,
-    Octokit: Octokit$2
+	__proto__: null,
+	Octokit: Octokit$2
 });
 
 var require$$2 = /*@__PURE__*/getAugmentedNamespace(distWeb$1);
 
-const VERSION$9 = "10.4.1";
+const VERSION$a = "10.4.1";
 
 const Endpoints$1 = {
   actions: {
@@ -36068,7 +30713,7 @@ function restEndpointMethods(octokit) {
     rest: api
   };
 }
-restEndpointMethods.VERSION = VERSION$9;
+restEndpointMethods.VERSION = VERSION$a;
 function legacyRestEndpointMethods$1(octokit) {
   const api = endpointsToMethods$1(octokit);
   return {
@@ -36076,18 +30721,18 @@ function legacyRestEndpointMethods$1(octokit) {
     rest: api
   };
 }
-legacyRestEndpointMethods$1.VERSION = VERSION$9;
+legacyRestEndpointMethods$1.VERSION = VERSION$a;
 
 var distSrc = /*#__PURE__*/Object.freeze({
-    __proto__: null,
-    legacyRestEndpointMethods: legacyRestEndpointMethods$1,
-    restEndpointMethods: restEndpointMethods
+	__proto__: null,
+	legacyRestEndpointMethods: legacyRestEndpointMethods$1,
+	restEndpointMethods: restEndpointMethods
 });
 
 var require$$3 = /*@__PURE__*/getAugmentedNamespace(distSrc);
 
 // pkg/dist-src/version.js
-var VERSION$8 = "9.2.1";
+var VERSION$9 = "9.2.1";
 
 // pkg/dist-src/normalize-paginated-list-response.js
 function normalizePaginatedListResponse$1(response) {
@@ -36447,14 +31092,14 @@ function paginateRest$1(octokit) {
     })
   };
 }
-paginateRest$1.VERSION = VERSION$8;
+paginateRest$1.VERSION = VERSION$9;
 
 var distWeb = /*#__PURE__*/Object.freeze({
-    __proto__: null,
-    composePaginateRest: composePaginateRest,
-    isPaginatingEndpoint: isPaginatingEndpoint,
-    paginateRest: paginateRest$1,
-    paginatingEndpoints: paginatingEndpoints
+	__proto__: null,
+	composePaginateRest: composePaginateRest,
+	isPaginatingEndpoint: isPaginatingEndpoint,
+	paginateRest: paginateRest$1,
+	paginatingEndpoints: paginatingEndpoints
 });
 
 var require$$4 = /*@__PURE__*/getAugmentedNamespace(distWeb);
@@ -36732,10 +31377,10 @@ var Hook = { Singular, Collection };
 // pkg/dist-src/defaults.js
 
 // pkg/dist-src/version.js
-var VERSION$7 = "0.0.0-development";
+var VERSION$8 = "0.0.0-development";
 
 // pkg/dist-src/defaults.js
-var userAgent = `octokit-endpoint.js/${VERSION$7} ${getUserAgent()}`;
+var userAgent = `octokit-endpoint.js/${VERSION$8} ${getUserAgent()}`;
 var DEFAULTS = {
   method: "GET",
   baseUrl: "https://api.github.com",
@@ -36945,10 +31590,10 @@ function getValues(context, operator, key, modifier) {
 }
 function parseUrl(template) {
   return {
-    expand: expand.bind(null, template)
+    expand: expand$1.bind(null, template)
   };
 }
-function expand(template, context) {
+function expand$1(template, context) {
   var operators = ["+", "#", ".", "/", ";", "?", "&"];
   template = template.replace(
     /\{([^\{\}]+)\}|([^\{\}]+)/g,
@@ -37293,12 +31938,12 @@ class RequestError extends Error {
 // pkg/dist-src/index.js
 
 // pkg/dist-src/version.js
-var VERSION$6 = "0.0.0-development";
+var VERSION$7 = "0.0.0-development";
 
 // pkg/dist-src/defaults.js
 var defaults_default = {
   headers: {
-    "user-agent": `octokit-request.js/${VERSION$6} ${getUserAgent()}`
+    "user-agent": `octokit-request.js/${VERSION$7} ${getUserAgent()}`
   }
 };
 
@@ -37474,7 +32119,7 @@ var request = withDefaults$1(endpoint, defaults_default);
 // pkg/dist-src/index.js
 
 // pkg/dist-src/version.js
-var VERSION$5 = "0.0.0-development";
+var VERSION$6 = "0.0.0-development";
 
 // pkg/dist-src/error.js
 function _buildMessageForResponseErrors(data) {
@@ -37575,7 +32220,7 @@ function withDefaults(request2, newDefaults) {
 // pkg/dist-src/index.js
 withDefaults(request, {
   headers: {
-    "user-agent": `octokit-graphql.js/${VERSION$5} ${getUserAgent()}`
+    "user-agent": `octokit-graphql.js/${VERSION$6} ${getUserAgent()}`
   },
   method: "POST",
   url: "/graphql"
@@ -37637,15 +32282,15 @@ var createTokenAuth = function createTokenAuth2(token) {
   });
 };
 
-const VERSION$4 = "6.1.3";
+const VERSION$5 = "6.1.3";
 
 const noop = () => {
 };
 const consoleWarn = console.warn.bind(console);
 const consoleError = console.error.bind(console);
-const userAgentTrail = `octokit-core.js/${VERSION$4} ${getUserAgent()}`;
+const userAgentTrail = `octokit-core.js/${VERSION$5} ${getUserAgent()}`;
 let Octokit$1 = class Octokit {
-  static VERSION = VERSION$4;
+  static VERSION = VERSION$5;
   static defaults(defaults) {
     const OctokitWithDefaults = class extends this {
       constructor(...args) {
@@ -37765,7 +32410,7 @@ let Octokit$1 = class Octokit {
   auth;
 };
 
-const VERSION$3 = "5.3.1";
+const VERSION$4 = "5.3.1";
 
 function requestLog(octokit) {
   octokit.hook.wrap("request", (request, options) => {
@@ -37788,10 +32433,10 @@ function requestLog(octokit) {
     });
   });
 }
-requestLog.VERSION = VERSION$3;
+requestLog.VERSION = VERSION$4;
 
 // pkg/dist-src/version.js
-var VERSION$2 = "0.0.0-development";
+var VERSION$3 = "0.0.0-development";
 
 // pkg/dist-src/normalize-paginated-list-response.js
 function normalizePaginatedListResponse(response) {
@@ -37901,9 +32546,9 @@ function paginateRest(octokit) {
     })
   };
 }
-paginateRest.VERSION = VERSION$2;
+paginateRest.VERSION = VERSION$3;
 
-const VERSION$1 = "13.3.0";
+const VERSION$2 = "13.3.0";
 
 const Endpoints = {
   actions: {
@@ -40101,17 +34746,5416 @@ function legacyRestEndpointMethods(octokit) {
     rest: api
   };
 }
-legacyRestEndpointMethods.VERSION = VERSION$1;
+legacyRestEndpointMethods.VERSION = VERSION$2;
 
-const VERSION = "21.1.0";
+const VERSION$1 = "21.1.0";
 
 const Octokit = Octokit$1.plugin(requestLog, legacyRestEndpointMethods, paginateRest).defaults(
   {
-    userAgent: `octokit-rest.js/${VERSION}`
+    userAgent: `octokit-rest.js/${VERSION$1}`
   }
 );
 
-const createReviewPrompt = (language, patch) => {
+const failWithOutput = (message) => {
+    console.error(message);
+    coreExports.setFailed(message);
+    throw new Error(message);
+};
+
+const default_format = 'RFC3986';
+const formatters = {
+    RFC1738: (v) => String(v).replace(/%20/g, '+'),
+    RFC3986: (v) => String(v),
+};
+const RFC1738 = 'RFC1738';
+
+const is_array$1 = Array.isArray;
+const hex_table = (() => {
+    const array = [];
+    for (let i = 0; i < 256; ++i) {
+        array.push('%' + ((i < 16 ? '0' : '') + i.toString(16)).toUpperCase());
+    }
+    return array;
+})();
+const limit = 1024;
+const encode = (str, _defaultEncoder, charset, _kind, format) => {
+    // This code was originally written by Brian White for the io.js core querystring library.
+    // It has been adapted here for stricter adherence to RFC 3986
+    if (str.length === 0) {
+        return str;
+    }
+    let string = str;
+    if (typeof str === 'symbol') {
+        string = Symbol.prototype.toString.call(str);
+    }
+    else if (typeof str !== 'string') {
+        string = String(str);
+    }
+    if (charset === 'iso-8859-1') {
+        return escape(string).replace(/%u[0-9a-f]{4}/gi, function ($0) {
+            return '%26%23' + parseInt($0.slice(2), 16) + '%3B';
+        });
+    }
+    let out = '';
+    for (let j = 0; j < string.length; j += limit) {
+        const segment = string.length >= limit ? string.slice(j, j + limit) : string;
+        const arr = [];
+        for (let i = 0; i < segment.length; ++i) {
+            let c = segment.charCodeAt(i);
+            if (c === 0x2d || // -
+                c === 0x2e || // .
+                c === 0x5f || // _
+                c === 0x7e || // ~
+                (c >= 0x30 && c <= 0x39) || // 0-9
+                (c >= 0x41 && c <= 0x5a) || // a-z
+                (c >= 0x61 && c <= 0x7a) || // A-Z
+                (format === RFC1738 && (c === 0x28 || c === 0x29)) // ( )
+            ) {
+                arr[arr.length] = segment.charAt(i);
+                continue;
+            }
+            if (c < 0x80) {
+                arr[arr.length] = hex_table[c];
+                continue;
+            }
+            if (c < 0x800) {
+                arr[arr.length] = hex_table[0xc0 | (c >> 6)] + hex_table[0x80 | (c & 0x3f)];
+                continue;
+            }
+            if (c < 0xd800 || c >= 0xe000) {
+                arr[arr.length] =
+                    hex_table[0xe0 | (c >> 12)] + hex_table[0x80 | ((c >> 6) & 0x3f)] + hex_table[0x80 | (c & 0x3f)];
+                continue;
+            }
+            i += 1;
+            c = 0x10000 + (((c & 0x3ff) << 10) | (segment.charCodeAt(i) & 0x3ff));
+            arr[arr.length] =
+                hex_table[0xf0 | (c >> 18)] +
+                    hex_table[0x80 | ((c >> 12) & 0x3f)] +
+                    hex_table[0x80 | ((c >> 6) & 0x3f)] +
+                    hex_table[0x80 | (c & 0x3f)];
+        }
+        out += arr.join('');
+    }
+    return out;
+};
+function is_buffer(obj) {
+    if (!obj || typeof obj !== 'object') {
+        return false;
+    }
+    return !!(obj.constructor && obj.constructor.isBuffer && obj.constructor.isBuffer(obj));
+}
+function maybe_map(val, fn) {
+    if (is_array$1(val)) {
+        const mapped = [];
+        for (let i = 0; i < val.length; i += 1) {
+            mapped.push(fn(val[i]));
+        }
+        return mapped;
+    }
+    return fn(val);
+}
+
+const has = Object.prototype.hasOwnProperty;
+const array_prefix_generators = {
+    brackets(prefix) {
+        return String(prefix) + '[]';
+    },
+    comma: 'comma',
+    indices(prefix, key) {
+        return String(prefix) + '[' + key + ']';
+    },
+    repeat(prefix) {
+        return String(prefix);
+    },
+};
+const is_array = Array.isArray;
+const push = Array.prototype.push;
+const push_to_array = function (arr, value_or_array) {
+    push.apply(arr, is_array(value_or_array) ? value_or_array : [value_or_array]);
+};
+const to_ISO = Date.prototype.toISOString;
+const defaults$1 = {
+    addQueryPrefix: false,
+    allowDots: false,
+    allowEmptyArrays: false,
+    arrayFormat: 'indices',
+    charset: 'utf-8',
+    charsetSentinel: false,
+    delimiter: '&',
+    encode: true,
+    encodeDotInKeys: false,
+    encoder: encode,
+    encodeValuesOnly: false,
+    format: default_format,
+    formatter: formatters[default_format],
+    /** @deprecated */
+    indices: false,
+    serializeDate(date) {
+        return to_ISO.call(date);
+    },
+    skipNulls: false,
+    strictNullHandling: false,
+};
+function is_non_nullish_primitive(v) {
+    return (typeof v === 'string' ||
+        typeof v === 'number' ||
+        typeof v === 'boolean' ||
+        typeof v === 'symbol' ||
+        typeof v === 'bigint');
+}
+const sentinel = {};
+function inner_stringify(object, prefix, generateArrayPrefix, commaRoundTrip, allowEmptyArrays, strictNullHandling, skipNulls, encodeDotInKeys, encoder, filter, sort, allowDots, serializeDate, format, formatter, encodeValuesOnly, charset, sideChannel) {
+    let obj = object;
+    let tmp_sc = sideChannel;
+    let step = 0;
+    let find_flag = false;
+    while ((tmp_sc = tmp_sc.get(sentinel)) !== undefined && !find_flag) {
+        // Where object last appeared in the ref tree
+        const pos = tmp_sc.get(object);
+        step += 1;
+        if (typeof pos !== 'undefined') {
+            if (pos === step) {
+                throw new RangeError('Cyclic object value');
+            }
+            else {
+                find_flag = true; // Break while
+            }
+        }
+        if (typeof tmp_sc.get(sentinel) === 'undefined') {
+            step = 0;
+        }
+    }
+    if (typeof filter === 'function') {
+        obj = filter(prefix, obj);
+    }
+    else if (obj instanceof Date) {
+        obj = serializeDate?.(obj);
+    }
+    else if (generateArrayPrefix === 'comma' && is_array(obj)) {
+        obj = maybe_map(obj, function (value) {
+            if (value instanceof Date) {
+                return serializeDate?.(value);
+            }
+            return value;
+        });
+    }
+    if (obj === null) {
+        if (strictNullHandling) {
+            return encoder && !encodeValuesOnly ?
+                // @ts-expect-error
+                encoder(prefix, defaults$1.encoder, charset, 'key', format)
+                : prefix;
+        }
+        obj = '';
+    }
+    if (is_non_nullish_primitive(obj) || is_buffer(obj)) {
+        if (encoder) {
+            const key_value = encodeValuesOnly ? prefix
+                // @ts-expect-error
+                : encoder(prefix, defaults$1.encoder, charset, 'key', format);
+            return [
+                formatter?.(key_value) +
+                    '=' +
+                    // @ts-expect-error
+                    formatter?.(encoder(obj, defaults$1.encoder, charset, 'value', format)),
+            ];
+        }
+        return [formatter?.(prefix) + '=' + formatter?.(String(obj))];
+    }
+    const values = [];
+    if (typeof obj === 'undefined') {
+        return values;
+    }
+    let obj_keys;
+    if (generateArrayPrefix === 'comma' && is_array(obj)) {
+        // we need to join elements in
+        if (encodeValuesOnly && encoder) {
+            // @ts-expect-error values only
+            obj = maybe_map(obj, encoder);
+        }
+        obj_keys = [{ value: obj.length > 0 ? obj.join(',') || null : undefined }];
+    }
+    else if (is_array(filter)) {
+        obj_keys = filter;
+    }
+    else {
+        const keys = Object.keys(obj);
+        obj_keys = sort ? keys.sort(sort) : keys;
+    }
+    const encoded_prefix = encodeDotInKeys ? String(prefix).replace(/\./g, '%2E') : String(prefix);
+    const adjusted_prefix = commaRoundTrip && is_array(obj) && obj.length === 1 ? encoded_prefix + '[]' : encoded_prefix;
+    if (allowEmptyArrays && is_array(obj) && obj.length === 0) {
+        return adjusted_prefix + '[]';
+    }
+    for (let j = 0; j < obj_keys.length; ++j) {
+        const key = obj_keys[j];
+        const value = 
+        // @ts-ignore
+        typeof key === 'object' && typeof key.value !== 'undefined' ? key.value : obj[key];
+        if (skipNulls && value === null) {
+            continue;
+        }
+        // @ts-ignore
+        const encoded_key = allowDots && encodeDotInKeys ? key.replace(/\./g, '%2E') : key;
+        const key_prefix = is_array(obj) ?
+            typeof generateArrayPrefix === 'function' ?
+                generateArrayPrefix(adjusted_prefix, encoded_key)
+                : adjusted_prefix
+            : adjusted_prefix + (allowDots ? '.' + encoded_key : '[' + encoded_key + ']');
+        sideChannel.set(object, step);
+        const valueSideChannel = new WeakMap();
+        valueSideChannel.set(sentinel, sideChannel);
+        push_to_array(values, inner_stringify(value, key_prefix, generateArrayPrefix, commaRoundTrip, allowEmptyArrays, strictNullHandling, skipNulls, encodeDotInKeys, 
+        // @ts-ignore
+        generateArrayPrefix === 'comma' && encodeValuesOnly && is_array(obj) ? null : encoder, filter, sort, allowDots, serializeDate, format, formatter, encodeValuesOnly, charset, valueSideChannel));
+    }
+    return values;
+}
+function normalize_stringify_options(opts = defaults$1) {
+    if (typeof opts.allowEmptyArrays !== 'undefined' && typeof opts.allowEmptyArrays !== 'boolean') {
+        throw new TypeError('`allowEmptyArrays` option can only be `true` or `false`, when provided');
+    }
+    if (typeof opts.encodeDotInKeys !== 'undefined' && typeof opts.encodeDotInKeys !== 'boolean') {
+        throw new TypeError('`encodeDotInKeys` option can only be `true` or `false`, when provided');
+    }
+    if (opts.encoder !== null && typeof opts.encoder !== 'undefined' && typeof opts.encoder !== 'function') {
+        throw new TypeError('Encoder has to be a function.');
+    }
+    const charset = opts.charset || defaults$1.charset;
+    if (typeof opts.charset !== 'undefined' && opts.charset !== 'utf-8' && opts.charset !== 'iso-8859-1') {
+        throw new TypeError('The charset option must be either utf-8, iso-8859-1, or undefined');
+    }
+    let format = default_format;
+    if (typeof opts.format !== 'undefined') {
+        if (!has.call(formatters, opts.format)) {
+            throw new TypeError('Unknown format option provided.');
+        }
+        format = opts.format;
+    }
+    const formatter = formatters[format];
+    let filter = defaults$1.filter;
+    if (typeof opts.filter === 'function' || is_array(opts.filter)) {
+        filter = opts.filter;
+    }
+    let arrayFormat;
+    if (opts.arrayFormat && opts.arrayFormat in array_prefix_generators) {
+        arrayFormat = opts.arrayFormat;
+    }
+    else if ('indices' in opts) {
+        arrayFormat = opts.indices ? 'indices' : 'repeat';
+    }
+    else {
+        arrayFormat = defaults$1.arrayFormat;
+    }
+    if ('commaRoundTrip' in opts && typeof opts.commaRoundTrip !== 'boolean') {
+        throw new TypeError('`commaRoundTrip` must be a boolean, or absent');
+    }
+    const allowDots = typeof opts.allowDots === 'undefined' ?
+        !!opts.encodeDotInKeys === true ?
+            true
+            : defaults$1.allowDots
+        : !!opts.allowDots;
+    return {
+        addQueryPrefix: typeof opts.addQueryPrefix === 'boolean' ? opts.addQueryPrefix : defaults$1.addQueryPrefix,
+        // @ts-ignore
+        allowDots: allowDots,
+        allowEmptyArrays: typeof opts.allowEmptyArrays === 'boolean' ? !!opts.allowEmptyArrays : defaults$1.allowEmptyArrays,
+        arrayFormat: arrayFormat,
+        charset: charset,
+        charsetSentinel: typeof opts.charsetSentinel === 'boolean' ? opts.charsetSentinel : defaults$1.charsetSentinel,
+        commaRoundTrip: !!opts.commaRoundTrip,
+        delimiter: typeof opts.delimiter === 'undefined' ? defaults$1.delimiter : opts.delimiter,
+        encode: typeof opts.encode === 'boolean' ? opts.encode : defaults$1.encode,
+        encodeDotInKeys: typeof opts.encodeDotInKeys === 'boolean' ? opts.encodeDotInKeys : defaults$1.encodeDotInKeys,
+        encoder: typeof opts.encoder === 'function' ? opts.encoder : defaults$1.encoder,
+        encodeValuesOnly: typeof opts.encodeValuesOnly === 'boolean' ? opts.encodeValuesOnly : defaults$1.encodeValuesOnly,
+        filter: filter,
+        format: format,
+        formatter: formatter,
+        serializeDate: typeof opts.serializeDate === 'function' ? opts.serializeDate : defaults$1.serializeDate,
+        skipNulls: typeof opts.skipNulls === 'boolean' ? opts.skipNulls : defaults$1.skipNulls,
+        // @ts-ignore
+        sort: typeof opts.sort === 'function' ? opts.sort : null,
+        strictNullHandling: typeof opts.strictNullHandling === 'boolean' ? opts.strictNullHandling : defaults$1.strictNullHandling,
+    };
+}
+function stringify(object, opts = {}) {
+    let obj = object;
+    const options = normalize_stringify_options(opts);
+    let obj_keys;
+    let filter;
+    if (typeof options.filter === 'function') {
+        filter = options.filter;
+        obj = filter('', obj);
+    }
+    else if (is_array(options.filter)) {
+        filter = options.filter;
+        obj_keys = filter;
+    }
+    const keys = [];
+    if (typeof obj !== 'object' || obj === null) {
+        return '';
+    }
+    const generateArrayPrefix = array_prefix_generators[options.arrayFormat];
+    const commaRoundTrip = generateArrayPrefix === 'comma' && options.commaRoundTrip;
+    if (!obj_keys) {
+        obj_keys = Object.keys(obj);
+    }
+    if (options.sort) {
+        obj_keys.sort(options.sort);
+    }
+    const sideChannel = new WeakMap();
+    for (let i = 0; i < obj_keys.length; ++i) {
+        const key = obj_keys[i];
+        if (options.skipNulls && obj[key] === null) {
+            continue;
+        }
+        push_to_array(keys, inner_stringify(obj[key], key, 
+        // @ts-expect-error
+        generateArrayPrefix, commaRoundTrip, options.allowEmptyArrays, options.strictNullHandling, options.skipNulls, options.encodeDotInKeys, options.encode ? options.encoder : null, options.filter, options.sort, options.allowDots, options.serializeDate, options.format, options.formatter, options.encodeValuesOnly, options.charset, sideChannel));
+    }
+    const joined = keys.join(options.delimiter);
+    let prefix = options.addQueryPrefix === true ? '?' : '';
+    if (options.charsetSentinel) {
+        if (options.charset === 'iso-8859-1') {
+            // encodeURIComponent('&#10003;'), the "numeric entity" representation of a checkmark
+            prefix += 'utf8=%26%2310003%3B&';
+        }
+        else {
+            // encodeURIComponent('✓')
+            prefix += 'utf8=%E2%9C%93&';
+        }
+    }
+    return joined.length > 0 ? prefix + joined : '';
+}
+
+const VERSION = '4.80.0'; // x-release-please-version
+
+let auto = false;
+let kind = undefined;
+let fetch$1 = undefined;
+let FormData$1 = undefined;
+let File$1 = undefined;
+let ReadableStream$1 = undefined;
+let getMultipartRequestOptions = undefined;
+let getDefaultAgent = undefined;
+let fileFromPath = undefined;
+let isFsReadStream = undefined;
+function setShims(shims, options = { auto: false }) {
+    if (auto) {
+        throw new Error(`you must \`import 'openai/shims/${shims.kind}'\` before importing anything else from openai`);
+    }
+    if (kind) {
+        throw new Error(`can't \`import 'openai/shims/${shims.kind}'\` after \`import 'openai/shims/${kind}'\``);
+    }
+    auto = options.auto;
+    kind = shims.kind;
+    fetch$1 = shims.fetch;
+    FormData$1 = shims.FormData;
+    File$1 = shims.File;
+    ReadableStream$1 = shims.ReadableStream;
+    getMultipartRequestOptions = shims.getMultipartRequestOptions;
+    getDefaultAgent = shims.getDefaultAgent;
+    fileFromPath = shims.fileFromPath;
+    isFsReadStream = shims.isFsReadStream;
+}
+
+/**
+ * Disclaimer: modules in _shims aren't intended to be imported by SDK users.
+ */
+class MultipartBody {
+    constructor(body) {
+        this.body = body;
+    }
+    get [Symbol.toStringTag]() {
+        return 'MultipartBody';
+    }
+}
+
+function getRuntime({ manuallyImported } = {}) {
+    const recommendation = manuallyImported ?
+        `You may need to use polyfills`
+        : `Add one of these imports before your first \`import … from 'openai'\`:
+- \`import 'openai/shims/node'\` (if you're running on Node)
+- \`import 'openai/shims/web'\` (otherwise)
+`;
+    let _fetch, _Request, _Response, _Headers;
+    try {
+        // @ts-ignore
+        _fetch = fetch;
+        // @ts-ignore
+        _Request = Request;
+        // @ts-ignore
+        _Response = Response;
+        // @ts-ignore
+        _Headers = Headers;
+    }
+    catch (error) {
+        throw new Error(`this environment is missing the following Web Fetch API type: ${error.message}. ${recommendation}`);
+    }
+    return {
+        kind: 'web',
+        fetch: _fetch,
+        Request: _Request,
+        Response: _Response,
+        Headers: _Headers,
+        FormData: 
+        // @ts-ignore
+        typeof FormData !== 'undefined' ? FormData : (class FormData {
+            // @ts-ignore
+            constructor() {
+                throw new Error(`file uploads aren't supported in this environment yet as 'FormData' is undefined. ${recommendation}`);
+            }
+        }),
+        Blob: typeof Blob !== 'undefined' ? Blob : (class Blob {
+            constructor() {
+                throw new Error(`file uploads aren't supported in this environment yet as 'Blob' is undefined. ${recommendation}`);
+            }
+        }),
+        File: 
+        // @ts-ignore
+        typeof File !== 'undefined' ? File : (class File {
+            // @ts-ignore
+            constructor() {
+                throw new Error(`file uploads aren't supported in this environment yet as 'File' is undefined. ${recommendation}`);
+            }
+        }),
+        ReadableStream: 
+        // @ts-ignore
+        typeof ReadableStream !== 'undefined' ? ReadableStream : (class ReadableStream {
+            // @ts-ignore
+            constructor() {
+                throw new Error(`streaming isn't supported in this environment yet as 'ReadableStream' is undefined. ${recommendation}`);
+            }
+        }),
+        getMultipartRequestOptions: async (
+        // @ts-ignore
+        form, opts) => ({
+            ...opts,
+            body: new MultipartBody(form),
+        }),
+        getDefaultAgent: (url) => undefined,
+        fileFromPath: () => {
+            throw new Error('The `fileFromPath` function is only supported in Node. See the README for more details: https://www.github.com/openai/openai-node#file-uploads');
+        },
+        isFsReadStream: (value) => false,
+    };
+}
+
+/**
+ * Disclaimer: modules in _shims aren't intended to be imported by SDK users.
+ */
+if (!kind) setShims(getRuntime(), { auto: true });
+
+// File generated from our OpenAPI spec by Stainless. See CONTRIBUTING.md for details.
+class OpenAIError extends Error {
+}
+class APIError extends OpenAIError {
+    constructor(status, error, message, headers) {
+        super(`${APIError.makeMessage(status, error, message)}`);
+        this.status = status;
+        this.headers = headers;
+        this.request_id = headers?.['x-request-id'];
+        this.error = error;
+        const data = error;
+        this.code = data?.['code'];
+        this.param = data?.['param'];
+        this.type = data?.['type'];
+    }
+    static makeMessage(status, error, message) {
+        const msg = error?.message ?
+            typeof error.message === 'string' ?
+                error.message
+                : JSON.stringify(error.message)
+            : error ? JSON.stringify(error)
+                : message;
+        if (status && msg) {
+            return `${status} ${msg}`;
+        }
+        if (status) {
+            return `${status} status code (no body)`;
+        }
+        if (msg) {
+            return msg;
+        }
+        return '(no status code or body)';
+    }
+    static generate(status, errorResponse, message, headers) {
+        if (!status || !headers) {
+            return new APIConnectionError({ message, cause: castToError(errorResponse) });
+        }
+        const error = errorResponse?.['error'];
+        if (status === 400) {
+            return new BadRequestError(status, error, message, headers);
+        }
+        if (status === 401) {
+            return new AuthenticationError(status, error, message, headers);
+        }
+        if (status === 403) {
+            return new PermissionDeniedError(status, error, message, headers);
+        }
+        if (status === 404) {
+            return new NotFoundError(status, error, message, headers);
+        }
+        if (status === 409) {
+            return new ConflictError(status, error, message, headers);
+        }
+        if (status === 422) {
+            return new UnprocessableEntityError(status, error, message, headers);
+        }
+        if (status === 429) {
+            return new RateLimitError(status, error, message, headers);
+        }
+        if (status >= 500) {
+            return new InternalServerError(status, error, message, headers);
+        }
+        return new APIError(status, error, message, headers);
+    }
+}
+class APIUserAbortError extends APIError {
+    constructor({ message } = {}) {
+        super(undefined, undefined, message || 'Request was aborted.', undefined);
+    }
+}
+class APIConnectionError extends APIError {
+    constructor({ message, cause }) {
+        super(undefined, undefined, message || 'Connection error.', undefined);
+        // in some environments the 'cause' property is already declared
+        // @ts-ignore
+        if (cause)
+            this.cause = cause;
+    }
+}
+class APIConnectionTimeoutError extends APIConnectionError {
+    constructor({ message } = {}) {
+        super({ message: message ?? 'Request timed out.' });
+    }
+}
+class BadRequestError extends APIError {
+}
+class AuthenticationError extends APIError {
+}
+class PermissionDeniedError extends APIError {
+}
+class NotFoundError extends APIError {
+}
+class ConflictError extends APIError {
+}
+class UnprocessableEntityError extends APIError {
+}
+class RateLimitError extends APIError {
+}
+class InternalServerError extends APIError {
+}
+class LengthFinishReasonError extends OpenAIError {
+    constructor() {
+        super(`Could not parse response content as the length limit was reached`);
+    }
+}
+class ContentFilterFinishReasonError extends OpenAIError {
+    constructor() {
+        super(`Could not parse response content as the request was rejected by the content filter`);
+    }
+}
+
+/**
+ * A re-implementation of httpx's `LineDecoder` in Python that handles incrementally
+ * reading lines from text.
+ *
+ * https://github.com/encode/httpx/blob/920333ea98118e9cf617f246905d7b202510941c/httpx/_decoders.py#L258
+ */
+class LineDecoder {
+    constructor() {
+        this.buffer = [];
+        this.trailingCR = false;
+    }
+    decode(chunk) {
+        let text = this.decodeText(chunk);
+        if (this.trailingCR) {
+            text = '\r' + text;
+            this.trailingCR = false;
+        }
+        if (text.endsWith('\r')) {
+            this.trailingCR = true;
+            text = text.slice(0, -1);
+        }
+        if (!text) {
+            return [];
+        }
+        const trailingNewline = LineDecoder.NEWLINE_CHARS.has(text[text.length - 1] || '');
+        let lines = text.split(LineDecoder.NEWLINE_REGEXP);
+        // if there is a trailing new line then the last entry will be an empty
+        // string which we don't care about
+        if (trailingNewline) {
+            lines.pop();
+        }
+        if (lines.length === 1 && !trailingNewline) {
+            this.buffer.push(lines[0]);
+            return [];
+        }
+        if (this.buffer.length > 0) {
+            lines = [this.buffer.join('') + lines[0], ...lines.slice(1)];
+            this.buffer = [];
+        }
+        if (!trailingNewline) {
+            this.buffer = [lines.pop() || ''];
+        }
+        return lines;
+    }
+    decodeText(bytes) {
+        if (bytes == null)
+            return '';
+        if (typeof bytes === 'string')
+            return bytes;
+        // Node:
+        if (typeof Buffer !== 'undefined') {
+            if (bytes instanceof Buffer) {
+                return bytes.toString();
+            }
+            if (bytes instanceof Uint8Array) {
+                return Buffer.from(bytes).toString();
+            }
+            throw new OpenAIError(`Unexpected: received non-Uint8Array (${bytes.constructor.name}) stream chunk in an environment with a global "Buffer" defined, which this library assumes to be Node. Please report this error.`);
+        }
+        // Browser
+        if (typeof TextDecoder !== 'undefined') {
+            if (bytes instanceof Uint8Array || bytes instanceof ArrayBuffer) {
+                this.textDecoder ?? (this.textDecoder = new TextDecoder('utf8'));
+                return this.textDecoder.decode(bytes);
+            }
+            throw new OpenAIError(`Unexpected: received non-Uint8Array/ArrayBuffer (${bytes.constructor.name}) in a web platform. Please report this error.`);
+        }
+        throw new OpenAIError(`Unexpected: neither Buffer nor TextDecoder are available as globals. Please report this error.`);
+    }
+    flush() {
+        if (!this.buffer.length && !this.trailingCR) {
+            return [];
+        }
+        const lines = [this.buffer.join('')];
+        this.buffer = [];
+        this.trailingCR = false;
+        return lines;
+    }
+}
+// prettier-ignore
+LineDecoder.NEWLINE_CHARS = new Set(['\n', '\r']);
+LineDecoder.NEWLINE_REGEXP = /\r\n|[\n\r]/g;
+
+/**
+ * Most browsers don't yet have async iterable support for ReadableStream,
+ * and Node has a very different way of reading bytes from its "ReadableStream".
+ *
+ * This polyfill was pulled from https://github.com/MattiasBuelens/web-streams-polyfill/pull/122#issuecomment-1627354490
+ */
+function ReadableStreamToAsyncIterable(stream) {
+    if (stream[Symbol.asyncIterator])
+        return stream;
+    const reader = stream.getReader();
+    return {
+        async next() {
+            try {
+                const result = await reader.read();
+                if (result?.done)
+                    reader.releaseLock(); // release lock when stream becomes closed
+                return result;
+            }
+            catch (e) {
+                reader.releaseLock(); // release lock when stream becomes errored
+                throw e;
+            }
+        },
+        async return() {
+            const cancelPromise = reader.cancel();
+            reader.releaseLock();
+            await cancelPromise;
+            return { done: true, value: undefined };
+        },
+        [Symbol.asyncIterator]() {
+            return this;
+        },
+    };
+}
+
+class Stream {
+    constructor(iterator, controller) {
+        this.iterator = iterator;
+        this.controller = controller;
+    }
+    static fromSSEResponse(response, controller) {
+        let consumed = false;
+        async function* iterator() {
+            if (consumed) {
+                throw new Error('Cannot iterate over a consumed stream, use `.tee()` to split the stream.');
+            }
+            consumed = true;
+            let done = false;
+            try {
+                for await (const sse of _iterSSEMessages(response, controller)) {
+                    if (done)
+                        continue;
+                    if (sse.data.startsWith('[DONE]')) {
+                        done = true;
+                        continue;
+                    }
+                    if (sse.event === null) {
+                        let data;
+                        try {
+                            data = JSON.parse(sse.data);
+                        }
+                        catch (e) {
+                            console.error(`Could not parse message into JSON:`, sse.data);
+                            console.error(`From chunk:`, sse.raw);
+                            throw e;
+                        }
+                        if (data && data.error) {
+                            throw new APIError(undefined, data.error, undefined, undefined);
+                        }
+                        yield data;
+                    }
+                    else {
+                        let data;
+                        try {
+                            data = JSON.parse(sse.data);
+                        }
+                        catch (e) {
+                            console.error(`Could not parse message into JSON:`, sse.data);
+                            console.error(`From chunk:`, sse.raw);
+                            throw e;
+                        }
+                        // TODO: Is this where the error should be thrown?
+                        if (sse.event == 'error') {
+                            throw new APIError(undefined, data.error, data.message, undefined);
+                        }
+                        yield { event: sse.event, data: data };
+                    }
+                }
+                done = true;
+            }
+            catch (e) {
+                // If the user calls `stream.controller.abort()`, we should exit without throwing.
+                if (e instanceof Error && e.name === 'AbortError')
+                    return;
+                throw e;
+            }
+            finally {
+                // If the user `break`s, abort the ongoing request.
+                if (!done)
+                    controller.abort();
+            }
+        }
+        return new Stream(iterator, controller);
+    }
+    /**
+     * Generates a Stream from a newline-separated ReadableStream
+     * where each item is a JSON value.
+     */
+    static fromReadableStream(readableStream, controller) {
+        let consumed = false;
+        async function* iterLines() {
+            const lineDecoder = new LineDecoder();
+            const iter = ReadableStreamToAsyncIterable(readableStream);
+            for await (const chunk of iter) {
+                for (const line of lineDecoder.decode(chunk)) {
+                    yield line;
+                }
+            }
+            for (const line of lineDecoder.flush()) {
+                yield line;
+            }
+        }
+        async function* iterator() {
+            if (consumed) {
+                throw new Error('Cannot iterate over a consumed stream, use `.tee()` to split the stream.');
+            }
+            consumed = true;
+            let done = false;
+            try {
+                for await (const line of iterLines()) {
+                    if (done)
+                        continue;
+                    if (line)
+                        yield JSON.parse(line);
+                }
+                done = true;
+            }
+            catch (e) {
+                // If the user calls `stream.controller.abort()`, we should exit without throwing.
+                if (e instanceof Error && e.name === 'AbortError')
+                    return;
+                throw e;
+            }
+            finally {
+                // If the user `break`s, abort the ongoing request.
+                if (!done)
+                    controller.abort();
+            }
+        }
+        return new Stream(iterator, controller);
+    }
+    [Symbol.asyncIterator]() {
+        return this.iterator();
+    }
+    /**
+     * Splits the stream into two streams which can be
+     * independently read from at different speeds.
+     */
+    tee() {
+        const left = [];
+        const right = [];
+        const iterator = this.iterator();
+        const teeIterator = (queue) => {
+            return {
+                next: () => {
+                    if (queue.length === 0) {
+                        const result = iterator.next();
+                        left.push(result);
+                        right.push(result);
+                    }
+                    return queue.shift();
+                },
+            };
+        };
+        return [
+            new Stream(() => teeIterator(left), this.controller),
+            new Stream(() => teeIterator(right), this.controller),
+        ];
+    }
+    /**
+     * Converts this stream to a newline-separated ReadableStream of
+     * JSON stringified values in the stream
+     * which can be turned back into a Stream with `Stream.fromReadableStream()`.
+     */
+    toReadableStream() {
+        const self = this;
+        let iter;
+        const encoder = new TextEncoder();
+        return new ReadableStream$1({
+            async start() {
+                iter = self[Symbol.asyncIterator]();
+            },
+            async pull(ctrl) {
+                try {
+                    const { value, done } = await iter.next();
+                    if (done)
+                        return ctrl.close();
+                    const bytes = encoder.encode(JSON.stringify(value) + '\n');
+                    ctrl.enqueue(bytes);
+                }
+                catch (err) {
+                    ctrl.error(err);
+                }
+            },
+            async cancel() {
+                await iter.return?.();
+            },
+        });
+    }
+}
+async function* _iterSSEMessages(response, controller) {
+    if (!response.body) {
+        controller.abort();
+        throw new OpenAIError(`Attempted to iterate over a response with no body`);
+    }
+    const sseDecoder = new SSEDecoder();
+    const lineDecoder = new LineDecoder();
+    const iter = ReadableStreamToAsyncIterable(response.body);
+    for await (const sseChunk of iterSSEChunks(iter)) {
+        for (const line of lineDecoder.decode(sseChunk)) {
+            const sse = sseDecoder.decode(line);
+            if (sse)
+                yield sse;
+        }
+    }
+    for (const line of lineDecoder.flush()) {
+        const sse = sseDecoder.decode(line);
+        if (sse)
+            yield sse;
+    }
+}
+/**
+ * Given an async iterable iterator, iterates over it and yields full
+ * SSE chunks, i.e. yields when a double new-line is encountered.
+ */
+async function* iterSSEChunks(iterator) {
+    let data = new Uint8Array();
+    for await (const chunk of iterator) {
+        if (chunk == null) {
+            continue;
+        }
+        const binaryChunk = chunk instanceof ArrayBuffer ? new Uint8Array(chunk)
+            : typeof chunk === 'string' ? new TextEncoder().encode(chunk)
+                : chunk;
+        let newData = new Uint8Array(data.length + binaryChunk.length);
+        newData.set(data);
+        newData.set(binaryChunk, data.length);
+        data = newData;
+        let patternIndex;
+        while ((patternIndex = findDoubleNewlineIndex(data)) !== -1) {
+            yield data.slice(0, patternIndex);
+            data = data.slice(patternIndex);
+        }
+    }
+    if (data.length > 0) {
+        yield data;
+    }
+}
+function findDoubleNewlineIndex(buffer) {
+    // This function searches the buffer for the end patterns (\r\r, \n\n, \r\n\r\n)
+    // and returns the index right after the first occurrence of any pattern,
+    // or -1 if none of the patterns are found.
+    const newline = 0x0a; // \n
+    const carriage = 0x0d; // \r
+    for (let i = 0; i < buffer.length - 2; i++) {
+        if (buffer[i] === newline && buffer[i + 1] === newline) {
+            // \n\n
+            return i + 2;
+        }
+        if (buffer[i] === carriage && buffer[i + 1] === carriage) {
+            // \r\r
+            return i + 2;
+        }
+        if (buffer[i] === carriage &&
+            buffer[i + 1] === newline &&
+            i + 3 < buffer.length &&
+            buffer[i + 2] === carriage &&
+            buffer[i + 3] === newline) {
+            // \r\n\r\n
+            return i + 4;
+        }
+    }
+    return -1;
+}
+class SSEDecoder {
+    constructor() {
+        this.event = null;
+        this.data = [];
+        this.chunks = [];
+    }
+    decode(line) {
+        if (line.endsWith('\r')) {
+            line = line.substring(0, line.length - 1);
+        }
+        if (!line) {
+            // empty line and we didn't previously encounter any messages
+            if (!this.event && !this.data.length)
+                return null;
+            const sse = {
+                event: this.event,
+                data: this.data.join('\n'),
+                raw: this.chunks,
+            };
+            this.event = null;
+            this.data = [];
+            this.chunks = [];
+            return sse;
+        }
+        this.chunks.push(line);
+        if (line.startsWith(':')) {
+            return null;
+        }
+        let [fieldname, _, value] = partition(line, ':');
+        if (value.startsWith(' ')) {
+            value = value.substring(1);
+        }
+        if (fieldname === 'event') {
+            this.event = value;
+        }
+        else if (fieldname === 'data') {
+            this.data.push(value);
+        }
+        return null;
+    }
+}
+function partition(str, delimiter) {
+    const index = str.indexOf(delimiter);
+    if (index !== -1) {
+        return [str.substring(0, index), delimiter, str.substring(index + delimiter.length)];
+    }
+    return [str, '', ''];
+}
+
+const isResponseLike = (value) => value != null &&
+    typeof value === 'object' &&
+    typeof value.url === 'string' &&
+    typeof value.blob === 'function';
+const isFileLike = (value) => value != null &&
+    typeof value === 'object' &&
+    typeof value.name === 'string' &&
+    typeof value.lastModified === 'number' &&
+    isBlobLike(value);
+/**
+ * The BlobLike type omits arrayBuffer() because @types/node-fetch@^2.6.4 lacks it; but this check
+ * adds the arrayBuffer() method type because it is available and used at runtime
+ */
+const isBlobLike = (value) => value != null &&
+    typeof value === 'object' &&
+    typeof value.size === 'number' &&
+    typeof value.type === 'string' &&
+    typeof value.text === 'function' &&
+    typeof value.slice === 'function' &&
+    typeof value.arrayBuffer === 'function';
+const isUploadable = (value) => {
+    return isFileLike(value) || isResponseLike(value) || isFsReadStream(value);
+};
+/**
+ * Helper for creating a {@link File} to pass to an SDK upload method from a variety of different data formats
+ * @param value the raw content of the file.  Can be an {@link Uploadable}, {@link BlobLikePart}, or {@link AsyncIterable} of {@link BlobLikePart}s
+ * @param {string=} name the name of the file. If omitted, toFile will try to determine a file name from bits if possible
+ * @param {Object=} options additional properties
+ * @param {string=} options.type the MIME type of the content
+ * @param {number=} options.lastModified the last modified timestamp
+ * @returns a {@link File} with the given properties
+ */
+async function toFile(value, name, options) {
+    // If it's a promise, resolve it.
+    value = await value;
+    // If we've been given a `File` we don't need to do anything
+    if (isFileLike(value)) {
+        return value;
+    }
+    if (isResponseLike(value)) {
+        const blob = await value.blob();
+        name || (name = new URL(value.url).pathname.split(/[\\/]/).pop() ?? 'unknown_file');
+        // we need to convert the `Blob` into an array buffer because the `Blob` class
+        // that `node-fetch` defines is incompatible with the web standard which results
+        // in `new File` interpreting it as a string instead of binary data.
+        const data = isBlobLike(blob) ? [(await blob.arrayBuffer())] : [blob];
+        return new File$1(data, name, options);
+    }
+    const bits = await getBytes(value);
+    name || (name = getName(value) ?? 'unknown_file');
+    if (!options?.type) {
+        const type = bits[0]?.type;
+        if (typeof type === 'string') {
+            options = { ...options, type };
+        }
+    }
+    return new File$1(bits, name, options);
+}
+async function getBytes(value) {
+    let parts = [];
+    if (typeof value === 'string' ||
+        ArrayBuffer.isView(value) || // includes Uint8Array, Buffer, etc.
+        value instanceof ArrayBuffer) {
+        parts.push(value);
+    }
+    else if (isBlobLike(value)) {
+        parts.push(await value.arrayBuffer());
+    }
+    else if (isAsyncIterableIterator(value) // includes Readable, ReadableStream, etc.
+    ) {
+        for await (const chunk of value) {
+            parts.push(chunk); // TODO, consider validating?
+        }
+    }
+    else {
+        throw new Error(`Unexpected data type: ${typeof value}; constructor: ${value?.constructor
+            ?.name}; props: ${propsForError(value)}`);
+    }
+    return parts;
+}
+function propsForError(value) {
+    const props = Object.getOwnPropertyNames(value);
+    return `[${props.map((p) => `"${p}"`).join(', ')}]`;
+}
+function getName(value) {
+    return (getStringFromMaybeBuffer(value.name) ||
+        getStringFromMaybeBuffer(value.filename) ||
+        // For fs.ReadStream
+        getStringFromMaybeBuffer(value.path)?.split(/[\\/]/).pop());
+}
+const getStringFromMaybeBuffer = (x) => {
+    if (typeof x === 'string')
+        return x;
+    if (typeof Buffer !== 'undefined' && x instanceof Buffer)
+        return String(x);
+    return undefined;
+};
+const isAsyncIterableIterator = (value) => value != null && typeof value === 'object' && typeof value[Symbol.asyncIterator] === 'function';
+const isMultipartBody = (body) => body && typeof body === 'object' && body.body && body[Symbol.toStringTag] === 'MultipartBody';
+const multipartFormRequestOptions = async (opts) => {
+    const form = await createForm(opts.body);
+    return getMultipartRequestOptions(form, opts);
+};
+const createForm = async (body) => {
+    const form = new FormData$1();
+    await Promise.all(Object.entries(body || {}).map(([key, value]) => addFormValue(form, key, value)));
+    return form;
+};
+const addFormValue = async (form, key, value) => {
+    if (value === undefined)
+        return;
+    if (value == null) {
+        throw new TypeError(`Received null for "${key}"; to pass null in FormData, you must use the string 'null'`);
+    }
+    // TODO: make nested formats configurable
+    if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+        form.append(key, String(value));
+    }
+    else if (isUploadable(value)) {
+        const file = await toFile(value);
+        form.append(key, file);
+    }
+    else if (Array.isArray(value)) {
+        await Promise.all(value.map((entry) => addFormValue(form, key + '[]', entry)));
+    }
+    else if (typeof value === 'object') {
+        await Promise.all(Object.entries(value).map(([name, prop]) => addFormValue(form, `${key}[${name}]`, prop)));
+    }
+    else {
+        throw new TypeError(`Invalid value given to form, expected a string, number, boolean, object, Array, File or Blob but got ${value} instead`);
+    }
+};
+
+var __classPrivateFieldSet$3 = (undefined && undefined.__classPrivateFieldSet) || function (receiver, state, value, kind, f) {
+    if (kind === "m") throw new TypeError("Private method is not writable");
+    if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a setter");
+    if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot write private member to an object whose class did not declare it");
+    return (kind === "a" ? f.call(receiver, value) : f ? f.value = value : state.set(receiver, value)), value;
+};
+var __classPrivateFieldGet$4 = (undefined && undefined.__classPrivateFieldGet) || function (receiver, state, kind, f) {
+    if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a getter");
+    if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot read private member from an object whose class did not declare it");
+    return kind === "m" ? f : kind === "a" ? f.call(receiver) : f ? f.value : state.get(receiver);
+};
+var _AbstractPage_client;
+async function defaultParseResponse(props) {
+    const { response } = props;
+    if (props.options.stream) {
+        debug('response', response.status, response.url, response.headers, response.body);
+        // Note: there is an invariant here that isn't represented in the type system
+        // that if you set `stream: true` the response type must also be `Stream<T>`
+        if (props.options.__streamClass) {
+            return props.options.__streamClass.fromSSEResponse(response, props.controller);
+        }
+        return Stream.fromSSEResponse(response, props.controller);
+    }
+    // fetch refuses to read the body when the status code is 204.
+    if (response.status === 204) {
+        return null;
+    }
+    if (props.options.__binaryResponse) {
+        return response;
+    }
+    const contentType = response.headers.get('content-type');
+    const isJSON = contentType?.includes('application/json') || contentType?.includes('application/vnd.api+json');
+    if (isJSON) {
+        const json = await response.json();
+        debug('response', response.status, response.url, response.headers, json);
+        return _addRequestID(json, response);
+    }
+    const text = await response.text();
+    debug('response', response.status, response.url, response.headers, text);
+    // TODO handle blob, arraybuffer, other content types, etc.
+    return text;
+}
+function _addRequestID(value, response) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+        return value;
+    }
+    return Object.defineProperty(value, '_request_id', {
+        value: response.headers.get('x-request-id'),
+        enumerable: false,
+    });
+}
+/**
+ * A subclass of `Promise` providing additional helper methods
+ * for interacting with the SDK.
+ */
+class APIPromise extends Promise {
+    constructor(responsePromise, parseResponse = defaultParseResponse) {
+        super((resolve) => {
+            // this is maybe a bit weird but this has to be a no-op to not implicitly
+            // parse the response body; instead .then, .catch, .finally are overridden
+            // to parse the response
+            resolve(null);
+        });
+        this.responsePromise = responsePromise;
+        this.parseResponse = parseResponse;
+    }
+    _thenUnwrap(transform) {
+        return new APIPromise(this.responsePromise, async (props) => _addRequestID(transform(await this.parseResponse(props), props), props.response));
+    }
+    /**
+     * Gets the raw `Response` instance instead of parsing the response
+     * data.
+     *
+     * If you want to parse the response body but still get the `Response`
+     * instance, you can use {@link withResponse()}.
+     *
+     * 👋 Getting the wrong TypeScript type for `Response`?
+     * Try setting `"moduleResolution": "NodeNext"` if you can,
+     * or add one of these imports before your first `import … from 'openai'`:
+     * - `import 'openai/shims/node'` (if you're running on Node)
+     * - `import 'openai/shims/web'` (otherwise)
+     */
+    asResponse() {
+        return this.responsePromise.then((p) => p.response);
+    }
+    /**
+     * Gets the parsed response data, the raw `Response` instance and the ID of the request,
+     * returned via the X-Request-ID header which is useful for debugging requests and reporting
+     * issues to OpenAI.
+     *
+     * If you just want to get the raw `Response` instance without parsing it,
+     * you can use {@link asResponse()}.
+     *
+     *
+     * 👋 Getting the wrong TypeScript type for `Response`?
+     * Try setting `"moduleResolution": "NodeNext"` if you can,
+     * or add one of these imports before your first `import … from 'openai'`:
+     * - `import 'openai/shims/node'` (if you're running on Node)
+     * - `import 'openai/shims/web'` (otherwise)
+     */
+    async withResponse() {
+        const [data, response] = await Promise.all([this.parse(), this.asResponse()]);
+        return { data, response, request_id: response.headers.get('x-request-id') };
+    }
+    parse() {
+        if (!this.parsedPromise) {
+            this.parsedPromise = this.responsePromise.then(this.parseResponse);
+        }
+        return this.parsedPromise;
+    }
+    then(onfulfilled, onrejected) {
+        return this.parse().then(onfulfilled, onrejected);
+    }
+    catch(onrejected) {
+        return this.parse().catch(onrejected);
+    }
+    finally(onfinally) {
+        return this.parse().finally(onfinally);
+    }
+}
+class APIClient {
+    constructor({ baseURL, maxRetries = 2, timeout = 600000, // 10 minutes
+    httpAgent, fetch: overriddenFetch, }) {
+        this.baseURL = baseURL;
+        this.maxRetries = validatePositiveInteger('maxRetries', maxRetries);
+        this.timeout = validatePositiveInteger('timeout', timeout);
+        this.httpAgent = httpAgent;
+        this.fetch = overriddenFetch ?? fetch$1;
+    }
+    authHeaders(opts) {
+        return {};
+    }
+    /**
+     * Override this to add your own default headers, for example:
+     *
+     *  {
+     *    ...super.defaultHeaders(),
+     *    Authorization: 'Bearer 123',
+     *  }
+     */
+    defaultHeaders(opts) {
+        return {
+            Accept: 'application/json',
+            'Content-Type': 'application/json',
+            'User-Agent': this.getUserAgent(),
+            ...getPlatformHeaders(),
+            ...this.authHeaders(opts),
+        };
+    }
+    /**
+     * Override this to add your own headers validation:
+     */
+    validateHeaders(headers, customHeaders) { }
+    defaultIdempotencyKey() {
+        return `stainless-node-retry-${uuid4()}`;
+    }
+    get(path, opts) {
+        return this.methodRequest('get', path, opts);
+    }
+    post(path, opts) {
+        return this.methodRequest('post', path, opts);
+    }
+    patch(path, opts) {
+        return this.methodRequest('patch', path, opts);
+    }
+    put(path, opts) {
+        return this.methodRequest('put', path, opts);
+    }
+    delete(path, opts) {
+        return this.methodRequest('delete', path, opts);
+    }
+    methodRequest(method, path, opts) {
+        return this.request(Promise.resolve(opts).then(async (opts) => {
+            const body = opts && isBlobLike(opts?.body) ? new DataView(await opts.body.arrayBuffer())
+                : opts?.body instanceof DataView ? opts.body
+                    : opts?.body instanceof ArrayBuffer ? new DataView(opts.body)
+                        : opts && ArrayBuffer.isView(opts?.body) ? new DataView(opts.body.buffer)
+                            : opts?.body;
+            return { method, path, ...opts, body };
+        }));
+    }
+    getAPIList(path, Page, opts) {
+        return this.requestAPIList(Page, { method: 'get', path, ...opts });
+    }
+    calculateContentLength(body) {
+        if (typeof body === 'string') {
+            if (typeof Buffer !== 'undefined') {
+                return Buffer.byteLength(body, 'utf8').toString();
+            }
+            if (typeof TextEncoder !== 'undefined') {
+                const encoder = new TextEncoder();
+                const encoded = encoder.encode(body);
+                return encoded.length.toString();
+            }
+        }
+        else if (ArrayBuffer.isView(body)) {
+            return body.byteLength.toString();
+        }
+        return null;
+    }
+    buildRequest(options, { retryCount = 0 } = {}) {
+        const { method, path, query, headers: headers = {} } = options;
+        const body = ArrayBuffer.isView(options.body) || (options.__binaryRequest && typeof options.body === 'string') ?
+            options.body
+            : isMultipartBody(options.body) ? options.body.body
+                : options.body ? JSON.stringify(options.body, null, 2)
+                    : null;
+        const contentLength = this.calculateContentLength(body);
+        const url = this.buildURL(path, query);
+        if ('timeout' in options)
+            validatePositiveInteger('timeout', options.timeout);
+        const timeout = options.timeout ?? this.timeout;
+        const httpAgent = options.httpAgent ?? this.httpAgent ?? getDefaultAgent(url);
+        const minAgentTimeout = timeout + 1000;
+        if (typeof httpAgent?.options?.timeout === 'number' &&
+            minAgentTimeout > (httpAgent.options.timeout ?? 0)) {
+            // Allow any given request to bump our agent active socket timeout.
+            // This may seem strange, but leaking active sockets should be rare and not particularly problematic,
+            // and without mutating agent we would need to create more of them.
+            // This tradeoff optimizes for performance.
+            httpAgent.options.timeout = minAgentTimeout;
+        }
+        if (this.idempotencyHeader && method !== 'get') {
+            if (!options.idempotencyKey)
+                options.idempotencyKey = this.defaultIdempotencyKey();
+            headers[this.idempotencyHeader] = options.idempotencyKey;
+        }
+        const reqHeaders = this.buildHeaders({ options, headers, contentLength, retryCount });
+        const req = {
+            method,
+            ...(body && { body: body }),
+            headers: reqHeaders,
+            ...(httpAgent && { agent: httpAgent }),
+            // @ts-ignore node-fetch uses a custom AbortSignal type that is
+            // not compatible with standard web types
+            signal: options.signal ?? null,
+        };
+        return { req, url, timeout };
+    }
+    buildHeaders({ options, headers, contentLength, retryCount, }) {
+        const reqHeaders = {};
+        if (contentLength) {
+            reqHeaders['content-length'] = contentLength;
+        }
+        const defaultHeaders = this.defaultHeaders(options);
+        applyHeadersMut(reqHeaders, defaultHeaders);
+        applyHeadersMut(reqHeaders, headers);
+        // let builtin fetch set the Content-Type for multipart bodies
+        if (isMultipartBody(options.body) && kind !== 'node') {
+            delete reqHeaders['content-type'];
+        }
+        // Don't set the retry count header if it was already set or removed through default headers or by the
+        // caller. We check `defaultHeaders` and `headers`, which can contain nulls, instead of `reqHeaders` to
+        // account for the removal case.
+        if (getHeader(defaultHeaders, 'x-stainless-retry-count') === undefined &&
+            getHeader(headers, 'x-stainless-retry-count') === undefined) {
+            reqHeaders['x-stainless-retry-count'] = String(retryCount);
+        }
+        this.validateHeaders(reqHeaders, headers);
+        return reqHeaders;
+    }
+    /**
+     * Used as a callback for mutating the given `FinalRequestOptions` object.
+     */
+    async prepareOptions(options) { }
+    /**
+     * Used as a callback for mutating the given `RequestInit` object.
+     *
+     * This is useful for cases where you want to add certain headers based off of
+     * the request properties, e.g. `method` or `url`.
+     */
+    async prepareRequest(request, { url, options }) { }
+    parseHeaders(headers) {
+        return (!headers ? {}
+            : Symbol.iterator in headers ?
+                Object.fromEntries(Array.from(headers).map((header) => [...header]))
+                : { ...headers });
+    }
+    makeStatusError(status, error, message, headers) {
+        return APIError.generate(status, error, message, headers);
+    }
+    request(options, remainingRetries = null) {
+        return new APIPromise(this.makeRequest(options, remainingRetries));
+    }
+    async makeRequest(optionsInput, retriesRemaining) {
+        const options = await optionsInput;
+        const maxRetries = options.maxRetries ?? this.maxRetries;
+        if (retriesRemaining == null) {
+            retriesRemaining = maxRetries;
+        }
+        await this.prepareOptions(options);
+        const { req, url, timeout } = this.buildRequest(options, { retryCount: maxRetries - retriesRemaining });
+        await this.prepareRequest(req, { url, options });
+        debug('request', url, options, req.headers);
+        if (options.signal?.aborted) {
+            throw new APIUserAbortError();
+        }
+        const controller = new AbortController();
+        const response = await this.fetchWithTimeout(url, req, timeout, controller).catch(castToError);
+        if (response instanceof Error) {
+            if (options.signal?.aborted) {
+                throw new APIUserAbortError();
+            }
+            if (retriesRemaining) {
+                return this.retryRequest(options, retriesRemaining);
+            }
+            if (response.name === 'AbortError') {
+                throw new APIConnectionTimeoutError();
+            }
+            throw new APIConnectionError({ cause: response });
+        }
+        const responseHeaders = createResponseHeaders(response.headers);
+        if (!response.ok) {
+            if (retriesRemaining && this.shouldRetry(response)) {
+                const retryMessage = `retrying, ${retriesRemaining} attempts remaining`;
+                debug(`response (error; ${retryMessage})`, response.status, url, responseHeaders);
+                return this.retryRequest(options, retriesRemaining, responseHeaders);
+            }
+            const errText = await response.text().catch((e) => castToError(e).message);
+            const errJSON = safeJSON(errText);
+            const errMessage = errJSON ? undefined : errText;
+            const retryMessage = retriesRemaining ? `(error; no more retries left)` : `(error; not retryable)`;
+            debug(`response (error; ${retryMessage})`, response.status, url, responseHeaders, errMessage);
+            const err = this.makeStatusError(response.status, errJSON, errMessage, responseHeaders);
+            throw err;
+        }
+        return { response, options, controller };
+    }
+    requestAPIList(Page, options) {
+        const request = this.makeRequest(options, null);
+        return new PagePromise(this, request, Page);
+    }
+    buildURL(path, query) {
+        const url = isAbsoluteURL(path) ?
+            new URL(path)
+            : new URL(this.baseURL + (this.baseURL.endsWith('/') && path.startsWith('/') ? path.slice(1) : path));
+        const defaultQuery = this.defaultQuery();
+        if (!isEmptyObj(defaultQuery)) {
+            query = { ...defaultQuery, ...query };
+        }
+        if (typeof query === 'object' && query && !Array.isArray(query)) {
+            url.search = this.stringifyQuery(query);
+        }
+        return url.toString();
+    }
+    stringifyQuery(query) {
+        return Object.entries(query)
+            .filter(([_, value]) => typeof value !== 'undefined')
+            .map(([key, value]) => {
+            if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+                return `${encodeURIComponent(key)}=${encodeURIComponent(value)}`;
+            }
+            if (value === null) {
+                return `${encodeURIComponent(key)}=`;
+            }
+            throw new OpenAIError(`Cannot stringify type ${typeof value}; Expected string, number, boolean, or null. If you need to pass nested query parameters, you can manually encode them, e.g. { query: { 'foo[key1]': value1, 'foo[key2]': value2 } }, and please open a GitHub issue requesting better support for your use case.`);
+        })
+            .join('&');
+    }
+    async fetchWithTimeout(url, init, ms, controller) {
+        const { signal, ...options } = init || {};
+        if (signal)
+            signal.addEventListener('abort', () => controller.abort());
+        const timeout = setTimeout(() => controller.abort(), ms);
+        const fetchOptions = {
+            signal: controller.signal,
+            ...options,
+        };
+        if (fetchOptions.method) {
+            // Custom methods like 'patch' need to be uppercased
+            // See https://github.com/nodejs/undici/issues/2294
+            fetchOptions.method = fetchOptions.method.toUpperCase();
+        }
+        return (
+        // use undefined this binding; fetch errors if bound to something else in browser/cloudflare
+        this.fetch.call(undefined, url, fetchOptions).finally(() => {
+            clearTimeout(timeout);
+        }));
+    }
+    shouldRetry(response) {
+        // Note this is not a standard header.
+        const shouldRetryHeader = response.headers.get('x-should-retry');
+        // If the server explicitly says whether or not to retry, obey.
+        if (shouldRetryHeader === 'true')
+            return true;
+        if (shouldRetryHeader === 'false')
+            return false;
+        // Retry on request timeouts.
+        if (response.status === 408)
+            return true;
+        // Retry on lock timeouts.
+        if (response.status === 409)
+            return true;
+        // Retry on rate limits.
+        if (response.status === 429)
+            return true;
+        // Retry internal errors.
+        if (response.status >= 500)
+            return true;
+        return false;
+    }
+    async retryRequest(options, retriesRemaining, responseHeaders) {
+        let timeoutMillis;
+        // Note the `retry-after-ms` header may not be standard, but is a good idea and we'd like proactive support for it.
+        const retryAfterMillisHeader = responseHeaders?.['retry-after-ms'];
+        if (retryAfterMillisHeader) {
+            const timeoutMs = parseFloat(retryAfterMillisHeader);
+            if (!Number.isNaN(timeoutMs)) {
+                timeoutMillis = timeoutMs;
+            }
+        }
+        // About the Retry-After header: https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Retry-After
+        const retryAfterHeader = responseHeaders?.['retry-after'];
+        if (retryAfterHeader && !timeoutMillis) {
+            const timeoutSeconds = parseFloat(retryAfterHeader);
+            if (!Number.isNaN(timeoutSeconds)) {
+                timeoutMillis = timeoutSeconds * 1000;
+            }
+            else {
+                timeoutMillis = Date.parse(retryAfterHeader) - Date.now();
+            }
+        }
+        // If the API asks us to wait a certain amount of time (and it's a reasonable amount),
+        // just do what it says, but otherwise calculate a default
+        if (!(timeoutMillis && 0 <= timeoutMillis && timeoutMillis < 60 * 1000)) {
+            const maxRetries = options.maxRetries ?? this.maxRetries;
+            timeoutMillis = this.calculateDefaultRetryTimeoutMillis(retriesRemaining, maxRetries);
+        }
+        await sleep(timeoutMillis);
+        return this.makeRequest(options, retriesRemaining - 1);
+    }
+    calculateDefaultRetryTimeoutMillis(retriesRemaining, maxRetries) {
+        const initialRetryDelay = 0.5;
+        const maxRetryDelay = 8.0;
+        const numRetries = maxRetries - retriesRemaining;
+        // Apply exponential backoff, but not more than the max.
+        const sleepSeconds = Math.min(initialRetryDelay * Math.pow(2, numRetries), maxRetryDelay);
+        // Apply some jitter, take up to at most 25 percent of the retry time.
+        const jitter = 1 - Math.random() * 0.25;
+        return sleepSeconds * jitter * 1000;
+    }
+    getUserAgent() {
+        return `${this.constructor.name}/JS ${VERSION}`;
+    }
+}
+class AbstractPage {
+    constructor(client, response, body, options) {
+        _AbstractPage_client.set(this, undefined);
+        __classPrivateFieldSet$3(this, _AbstractPage_client, client, "f");
+        this.options = options;
+        this.response = response;
+        this.body = body;
+    }
+    hasNextPage() {
+        const items = this.getPaginatedItems();
+        if (!items.length)
+            return false;
+        return this.nextPageInfo() != null;
+    }
+    async getNextPage() {
+        const nextInfo = this.nextPageInfo();
+        if (!nextInfo) {
+            throw new OpenAIError('No next page expected; please check `.hasNextPage()` before calling `.getNextPage()`.');
+        }
+        const nextOptions = { ...this.options };
+        if ('params' in nextInfo && typeof nextOptions.query === 'object') {
+            nextOptions.query = { ...nextOptions.query, ...nextInfo.params };
+        }
+        else if ('url' in nextInfo) {
+            const params = [...Object.entries(nextOptions.query || {}), ...nextInfo.url.searchParams.entries()];
+            for (const [key, value] of params) {
+                nextInfo.url.searchParams.set(key, value);
+            }
+            nextOptions.query = undefined;
+            nextOptions.path = nextInfo.url.toString();
+        }
+        return await __classPrivateFieldGet$4(this, _AbstractPage_client, "f").requestAPIList(this.constructor, nextOptions);
+    }
+    async *iterPages() {
+        // eslint-disable-next-line @typescript-eslint/no-this-alias
+        let page = this;
+        yield page;
+        while (page.hasNextPage()) {
+            page = await page.getNextPage();
+            yield page;
+        }
+    }
+    async *[(_AbstractPage_client = new WeakMap(), Symbol.asyncIterator)]() {
+        for await (const page of this.iterPages()) {
+            for (const item of page.getPaginatedItems()) {
+                yield item;
+            }
+        }
+    }
+}
+/**
+ * This subclass of Promise will resolve to an instantiated Page once the request completes.
+ *
+ * It also implements AsyncIterable to allow auto-paginating iteration on an unawaited list call, eg:
+ *
+ *    for await (const item of client.items.list()) {
+ *      console.log(item)
+ *    }
+ */
+class PagePromise extends APIPromise {
+    constructor(client, request, Page) {
+        super(request, async (props) => new Page(client, props.response, await defaultParseResponse(props), props.options));
+    }
+    /**
+     * Allow auto-paginating iteration on an unawaited list call, eg:
+     *
+     *    for await (const item of client.items.list()) {
+     *      console.log(item)
+     *    }
+     */
+    async *[Symbol.asyncIterator]() {
+        const page = await this;
+        for await (const item of page) {
+            yield item;
+        }
+    }
+}
+const createResponseHeaders = (headers) => {
+    return new Proxy(Object.fromEntries(
+    // @ts-ignore
+    headers.entries()), {
+        get(target, name) {
+            const key = name.toString();
+            return target[key.toLowerCase()] || target[key];
+        },
+    });
+};
+// This is required so that we can determine if a given object matches the RequestOptions
+// type at runtime. While this requires duplication, it is enforced by the TypeScript
+// compiler such that any missing / extraneous keys will cause an error.
+const requestOptionsKeys = {
+    method: true,
+    path: true,
+    query: true,
+    body: true,
+    headers: true,
+    maxRetries: true,
+    stream: true,
+    timeout: true,
+    httpAgent: true,
+    signal: true,
+    idempotencyKey: true,
+    __binaryRequest: true,
+    __binaryResponse: true,
+    __streamClass: true,
+};
+const isRequestOptions = (obj) => {
+    return (typeof obj === 'object' &&
+        obj !== null &&
+        !isEmptyObj(obj) &&
+        Object.keys(obj).every((k) => hasOwn(requestOptionsKeys, k)));
+};
+const getPlatformProperties = () => {
+    if (typeof Deno !== 'undefined' && Deno.build != null) {
+        return {
+            'X-Stainless-Lang': 'js',
+            'X-Stainless-Package-Version': VERSION,
+            'X-Stainless-OS': normalizePlatform(Deno.build.os),
+            'X-Stainless-Arch': normalizeArch(Deno.build.arch),
+            'X-Stainless-Runtime': 'deno',
+            'X-Stainless-Runtime-Version': typeof Deno.version === 'string' ? Deno.version : Deno.version?.deno ?? 'unknown',
+        };
+    }
+    if (typeof EdgeRuntime !== 'undefined') {
+        return {
+            'X-Stainless-Lang': 'js',
+            'X-Stainless-Package-Version': VERSION,
+            'X-Stainless-OS': 'Unknown',
+            'X-Stainless-Arch': `other:${EdgeRuntime}`,
+            'X-Stainless-Runtime': 'edge',
+            'X-Stainless-Runtime-Version': process.version,
+        };
+    }
+    // Check if Node.js
+    if (Object.prototype.toString.call(typeof process !== 'undefined' ? process : 0) === '[object process]') {
+        return {
+            'X-Stainless-Lang': 'js',
+            'X-Stainless-Package-Version': VERSION,
+            'X-Stainless-OS': normalizePlatform(process.platform),
+            'X-Stainless-Arch': normalizeArch(process.arch),
+            'X-Stainless-Runtime': 'node',
+            'X-Stainless-Runtime-Version': process.version,
+        };
+    }
+    const browserInfo = getBrowserInfo();
+    if (browserInfo) {
+        return {
+            'X-Stainless-Lang': 'js',
+            'X-Stainless-Package-Version': VERSION,
+            'X-Stainless-OS': 'Unknown',
+            'X-Stainless-Arch': 'unknown',
+            'X-Stainless-Runtime': `browser:${browserInfo.browser}`,
+            'X-Stainless-Runtime-Version': browserInfo.version,
+        };
+    }
+    // TODO add support for Cloudflare workers, etc.
+    return {
+        'X-Stainless-Lang': 'js',
+        'X-Stainless-Package-Version': VERSION,
+        'X-Stainless-OS': 'Unknown',
+        'X-Stainless-Arch': 'unknown',
+        'X-Stainless-Runtime': 'unknown',
+        'X-Stainless-Runtime-Version': 'unknown',
+    };
+};
+// Note: modified from https://github.com/JS-DevTools/host-environment/blob/b1ab79ecde37db5d6e163c050e54fe7d287d7c92/src/isomorphic.browser.ts
+function getBrowserInfo() {
+    if (typeof navigator === 'undefined' || !navigator) {
+        return null;
+    }
+    // NOTE: The order matters here!
+    const browserPatterns = [
+        { key: 'edge', pattern: /Edge(?:\W+(\d+)\.(\d+)(?:\.(\d+))?)?/ },
+        { key: 'ie', pattern: /MSIE(?:\W+(\d+)\.(\d+)(?:\.(\d+))?)?/ },
+        { key: 'ie', pattern: /Trident(?:.*rv\:(\d+)\.(\d+)(?:\.(\d+))?)?/ },
+        { key: 'chrome', pattern: /Chrome(?:\W+(\d+)\.(\d+)(?:\.(\d+))?)?/ },
+        { key: 'firefox', pattern: /Firefox(?:\W+(\d+)\.(\d+)(?:\.(\d+))?)?/ },
+        { key: 'safari', pattern: /(?:Version\W+(\d+)\.(\d+)(?:\.(\d+))?)?(?:\W+Mobile\S*)?\W+Safari/ },
+    ];
+    // Find the FIRST matching browser
+    for (const { key, pattern } of browserPatterns) {
+        const match = pattern.exec(navigator.userAgent);
+        if (match) {
+            const major = match[1] || 0;
+            const minor = match[2] || 0;
+            const patch = match[3] || 0;
+            return { browser: key, version: `${major}.${minor}.${patch}` };
+        }
+    }
+    return null;
+}
+const normalizeArch = (arch) => {
+    // Node docs:
+    // - https://nodejs.org/api/process.html#processarch
+    // Deno docs:
+    // - https://doc.deno.land/deno/stable/~/Deno.build
+    if (arch === 'x32')
+        return 'x32';
+    if (arch === 'x86_64' || arch === 'x64')
+        return 'x64';
+    if (arch === 'arm')
+        return 'arm';
+    if (arch === 'aarch64' || arch === 'arm64')
+        return 'arm64';
+    if (arch)
+        return `other:${arch}`;
+    return 'unknown';
+};
+const normalizePlatform = (platform) => {
+    // Node platforms:
+    // - https://nodejs.org/api/process.html#processplatform
+    // Deno platforms:
+    // - https://doc.deno.land/deno/stable/~/Deno.build
+    // - https://github.com/denoland/deno/issues/14799
+    platform = platform.toLowerCase();
+    // NOTE: this iOS check is untested and may not work
+    // Node does not work natively on IOS, there is a fork at
+    // https://github.com/nodejs-mobile/nodejs-mobile
+    // however it is unknown at the time of writing how to detect if it is running
+    if (platform.includes('ios'))
+        return 'iOS';
+    if (platform === 'android')
+        return 'Android';
+    if (platform === 'darwin')
+        return 'MacOS';
+    if (platform === 'win32')
+        return 'Windows';
+    if (platform === 'freebsd')
+        return 'FreeBSD';
+    if (platform === 'openbsd')
+        return 'OpenBSD';
+    if (platform === 'linux')
+        return 'Linux';
+    if (platform)
+        return `Other:${platform}`;
+    return 'Unknown';
+};
+let _platformHeaders;
+const getPlatformHeaders = () => {
+    return (_platformHeaders ?? (_platformHeaders = getPlatformProperties()));
+};
+const safeJSON = (text) => {
+    try {
+        return JSON.parse(text);
+    }
+    catch (err) {
+        return undefined;
+    }
+};
+// https://url.spec.whatwg.org/#url-scheme-string
+const startsWithSchemeRegexp = /^[a-z][a-z0-9+.-]*:/i;
+const isAbsoluteURL = (url) => {
+    return startsWithSchemeRegexp.test(url);
+};
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const validatePositiveInteger = (name, n) => {
+    if (typeof n !== 'number' || !Number.isInteger(n)) {
+        throw new OpenAIError(`${name} must be an integer`);
+    }
+    if (n < 0) {
+        throw new OpenAIError(`${name} must be a positive integer`);
+    }
+    return n;
+};
+const castToError = (err) => {
+    if (err instanceof Error)
+        return err;
+    if (typeof err === 'object' && err !== null) {
+        try {
+            return new Error(JSON.stringify(err));
+        }
+        catch { }
+    }
+    return new Error(err);
+};
+/**
+ * Read an environment variable.
+ *
+ * Trims beginning and trailing whitespace.
+ *
+ * Will return undefined if the environment variable doesn't exist or cannot be accessed.
+ */
+const readEnv = (env) => {
+    if (typeof process !== 'undefined') {
+        return process.env?.[env]?.trim() ?? undefined;
+    }
+    if (typeof Deno !== 'undefined') {
+        return Deno.env?.get?.(env)?.trim();
+    }
+    return undefined;
+};
+// https://stackoverflow.com/a/34491287
+function isEmptyObj(obj) {
+    if (!obj)
+        return true;
+    for (const _k in obj)
+        return false;
+    return true;
+}
+// https://eslint.org/docs/latest/rules/no-prototype-builtins
+function hasOwn(obj, key) {
+    return Object.prototype.hasOwnProperty.call(obj, key);
+}
+/**
+ * Copies headers from "newHeaders" onto "targetHeaders",
+ * using lower-case for all properties,
+ * ignoring any keys with undefined values,
+ * and deleting any keys with null values.
+ */
+function applyHeadersMut(targetHeaders, newHeaders) {
+    for (const k in newHeaders) {
+        if (!hasOwn(newHeaders, k))
+            continue;
+        const lowerKey = k.toLowerCase();
+        if (!lowerKey)
+            continue;
+        const val = newHeaders[k];
+        if (val === null) {
+            delete targetHeaders[lowerKey];
+        }
+        else if (val !== undefined) {
+            targetHeaders[lowerKey] = val;
+        }
+    }
+}
+const SENSITIVE_HEADERS = new Set(['authorization', 'api-key']);
+function debug(action, ...args) {
+    if (typeof process !== 'undefined' && process?.env?.['DEBUG'] === 'true') {
+        const modifiedArgs = args.map((arg) => {
+            if (!arg) {
+                return arg;
+            }
+            // Check for sensitive headers in request body 'headers' object
+            if (arg['headers']) {
+                // clone so we don't mutate
+                const modifiedArg = { ...arg, headers: { ...arg['headers'] } };
+                for (const header in arg['headers']) {
+                    if (SENSITIVE_HEADERS.has(header.toLowerCase())) {
+                        modifiedArg['headers'][header] = 'REDACTED';
+                    }
+                }
+                return modifiedArg;
+            }
+            let modifiedArg = null;
+            // Check for sensitive headers in headers object
+            for (const header in arg) {
+                if (SENSITIVE_HEADERS.has(header.toLowerCase())) {
+                    // avoid making a copy until we need to
+                    modifiedArg ?? (modifiedArg = { ...arg });
+                    modifiedArg[header] = 'REDACTED';
+                }
+            }
+            return modifiedArg ?? arg;
+        });
+        console.log(`OpenAI:DEBUG:${action}`, ...modifiedArgs);
+    }
+}
+/**
+ * https://stackoverflow.com/a/2117523
+ */
+const uuid4 = () => {
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+        const r = (Math.random() * 16) | 0;
+        const v = c === 'x' ? r : (r & 0x3) | 0x8;
+        return v.toString(16);
+    });
+};
+const isRunningInBrowser = () => {
+    return (
+    // @ts-ignore
+    typeof window !== 'undefined' &&
+        // @ts-ignore
+        typeof window.document !== 'undefined' &&
+        // @ts-ignore
+        typeof navigator !== 'undefined');
+};
+const isHeadersProtocol = (headers) => {
+    return typeof headers?.get === 'function';
+};
+const getHeader = (headers, header) => {
+    const lowerCasedHeader = header.toLowerCase();
+    if (isHeadersProtocol(headers)) {
+        // to deal with the case where the header looks like Stainless-Event-Id
+        const intercapsHeader = header[0]?.toUpperCase() +
+            header.substring(1).replace(/([^\w])(\w)/g, (_m, g1, g2) => g1 + g2.toUpperCase());
+        for (const key of [header, lowerCasedHeader, header.toUpperCase(), intercapsHeader]) {
+            const value = headers.get(key);
+            if (value) {
+                return value;
+            }
+        }
+    }
+    for (const [key, value] of Object.entries(headers)) {
+        if (key.toLowerCase() === lowerCasedHeader) {
+            if (Array.isArray(value)) {
+                if (value.length <= 1)
+                    return value[0];
+                console.warn(`Received ${value.length} entries for the ${header} header, using the first entry.`);
+                return value[0];
+            }
+            return value;
+        }
+    }
+    return undefined;
+};
+function isObj(obj) {
+    return obj != null && typeof obj === 'object' && !Array.isArray(obj);
+}
+
+// File generated from our OpenAPI spec by Stainless. See CONTRIBUTING.md for details.
+/**
+ * Note: no pagination actually occurs yet, this is for forwards-compatibility.
+ */
+class Page extends AbstractPage {
+    constructor(client, response, body, options) {
+        super(client, response, body, options);
+        this.data = body.data || [];
+        this.object = body.object;
+    }
+    getPaginatedItems() {
+        return this.data ?? [];
+    }
+    // @deprecated Please use `nextPageInfo()` instead
+    /**
+     * This page represents a response that isn't actually paginated at the API level
+     * so there will never be any next page params.
+     */
+    nextPageParams() {
+        return null;
+    }
+    nextPageInfo() {
+        return null;
+    }
+}
+class CursorPage extends AbstractPage {
+    constructor(client, response, body, options) {
+        super(client, response, body, options);
+        this.data = body.data || [];
+    }
+    getPaginatedItems() {
+        return this.data ?? [];
+    }
+    // @deprecated Please use `nextPageInfo()` instead
+    nextPageParams() {
+        const info = this.nextPageInfo();
+        if (!info)
+            return null;
+        if ('params' in info)
+            return info.params;
+        const params = Object.fromEntries(info.url.searchParams);
+        if (!Object.keys(params).length)
+            return null;
+        return params;
+    }
+    nextPageInfo() {
+        const data = this.getPaginatedItems();
+        if (!data.length) {
+            return null;
+        }
+        const id = data[data.length - 1]?.id;
+        if (!id) {
+            return null;
+        }
+        return { params: { after: id } };
+    }
+}
+
+// File generated from our OpenAPI spec by Stainless. See CONTRIBUTING.md for details.
+class APIResource {
+    constructor(client) {
+        this._client = client;
+    }
+}
+
+// File generated from our OpenAPI spec by Stainless. See CONTRIBUTING.md for details.
+let Completions$2 = class Completions extends APIResource {
+    create(body, options) {
+        return this._client.post('/chat/completions', { body, ...options, stream: body.stream ?? false });
+    }
+};
+
+// File generated from our OpenAPI spec by Stainless. See CONTRIBUTING.md for details.
+let Chat$2 = class Chat extends APIResource {
+    constructor() {
+        super(...arguments);
+        this.completions = new Completions$2(this._client);
+    }
+};
+Chat$2.Completions = Completions$2;
+
+// File generated from our OpenAPI spec by Stainless. See CONTRIBUTING.md for details.
+class Speech extends APIResource {
+    /**
+     * Generates audio from the input text.
+     */
+    create(body, options) {
+        return this._client.post('/audio/speech', {
+            body,
+            ...options,
+            headers: { Accept: 'application/octet-stream', ...options?.headers },
+            __binaryResponse: true,
+        });
+    }
+}
+
+// File generated from our OpenAPI spec by Stainless. See CONTRIBUTING.md for details.
+class Transcriptions extends APIResource {
+    create(body, options) {
+        return this._client.post('/audio/transcriptions', multipartFormRequestOptions({ body, ...options }));
+    }
+}
+
+// File generated from our OpenAPI spec by Stainless. See CONTRIBUTING.md for details.
+class Translations extends APIResource {
+    create(body, options) {
+        return this._client.post('/audio/translations', multipartFormRequestOptions({ body, ...options }));
+    }
+}
+
+// File generated from our OpenAPI spec by Stainless. See CONTRIBUTING.md for details.
+class Audio extends APIResource {
+    constructor() {
+        super(...arguments);
+        this.transcriptions = new Transcriptions(this._client);
+        this.translations = new Translations(this._client);
+        this.speech = new Speech(this._client);
+    }
+}
+Audio.Transcriptions = Transcriptions;
+Audio.Translations = Translations;
+Audio.Speech = Speech;
+
+// File generated from our OpenAPI spec by Stainless. See CONTRIBUTING.md for details.
+class Batches extends APIResource {
+    /**
+     * Creates and executes a batch from an uploaded file of requests
+     */
+    create(body, options) {
+        return this._client.post('/batches', { body, ...options });
+    }
+    /**
+     * Retrieves a batch.
+     */
+    retrieve(batchId, options) {
+        return this._client.get(`/batches/${batchId}`, options);
+    }
+    list(query = {}, options) {
+        if (isRequestOptions(query)) {
+            return this.list({}, query);
+        }
+        return this._client.getAPIList('/batches', BatchesPage, { query, ...options });
+    }
+    /**
+     * Cancels an in-progress batch. The batch will be in status `cancelling` for up to
+     * 10 minutes, before changing to `cancelled`, where it will have partial results
+     * (if any) available in the output file.
+     */
+    cancel(batchId, options) {
+        return this._client.post(`/batches/${batchId}/cancel`, options);
+    }
+}
+class BatchesPage extends CursorPage {
+}
+Batches.BatchesPage = BatchesPage;
+
+// File generated from our OpenAPI spec by Stainless. See CONTRIBUTING.md for details.
+class Assistants extends APIResource {
+    /**
+     * Create an assistant with a model and instructions.
+     */
+    create(body, options) {
+        return this._client.post('/assistants', {
+            body,
+            ...options,
+            headers: { 'OpenAI-Beta': 'assistants=v2', ...options?.headers },
+        });
+    }
+    /**
+     * Retrieves an assistant.
+     */
+    retrieve(assistantId, options) {
+        return this._client.get(`/assistants/${assistantId}`, {
+            ...options,
+            headers: { 'OpenAI-Beta': 'assistants=v2', ...options?.headers },
+        });
+    }
+    /**
+     * Modifies an assistant.
+     */
+    update(assistantId, body, options) {
+        return this._client.post(`/assistants/${assistantId}`, {
+            body,
+            ...options,
+            headers: { 'OpenAI-Beta': 'assistants=v2', ...options?.headers },
+        });
+    }
+    list(query = {}, options) {
+        if (isRequestOptions(query)) {
+            return this.list({}, query);
+        }
+        return this._client.getAPIList('/assistants', AssistantsPage, {
+            query,
+            ...options,
+            headers: { 'OpenAI-Beta': 'assistants=v2', ...options?.headers },
+        });
+    }
+    /**
+     * Delete an assistant.
+     */
+    del(assistantId, options) {
+        return this._client.delete(`/assistants/${assistantId}`, {
+            ...options,
+            headers: { 'OpenAI-Beta': 'assistants=v2', ...options?.headers },
+        });
+    }
+}
+class AssistantsPage extends CursorPage {
+}
+Assistants.AssistantsPage = AssistantsPage;
+
+function isRunnableFunctionWithParse(fn) {
+    return typeof fn.parse === 'function';
+}
+
+const isAssistantMessage = (message) => {
+    return message?.role === 'assistant';
+};
+const isFunctionMessage = (message) => {
+    return message?.role === 'function';
+};
+const isToolMessage = (message) => {
+    return message?.role === 'tool';
+};
+
+var __classPrivateFieldSet$2 = (undefined && undefined.__classPrivateFieldSet) || function (receiver, state, value, kind, f) {
+    if (kind === "m") throw new TypeError("Private method is not writable");
+    if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a setter");
+    if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot write private member to an object whose class did not declare it");
+    return (kind === "a" ? f.call(receiver, value) : f ? f.value = value : state.set(receiver, value)), value;
+};
+var __classPrivateFieldGet$3 = (undefined && undefined.__classPrivateFieldGet) || function (receiver, state, kind, f) {
+    if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a getter");
+    if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot read private member from an object whose class did not declare it");
+    return kind === "m" ? f : kind === "a" ? f.call(receiver) : f ? f.value : state.get(receiver);
+};
+var _EventStream_instances, _EventStream_connectedPromise, _EventStream_resolveConnectedPromise, _EventStream_rejectConnectedPromise, _EventStream_endPromise, _EventStream_resolveEndPromise, _EventStream_rejectEndPromise, _EventStream_listeners, _EventStream_ended, _EventStream_errored, _EventStream_aborted, _EventStream_catchingPromiseCreated, _EventStream_handleError;
+class EventStream {
+    constructor() {
+        _EventStream_instances.add(this);
+        this.controller = new AbortController();
+        _EventStream_connectedPromise.set(this, undefined);
+        _EventStream_resolveConnectedPromise.set(this, () => { });
+        _EventStream_rejectConnectedPromise.set(this, () => { });
+        _EventStream_endPromise.set(this, undefined);
+        _EventStream_resolveEndPromise.set(this, () => { });
+        _EventStream_rejectEndPromise.set(this, () => { });
+        _EventStream_listeners.set(this, {});
+        _EventStream_ended.set(this, false);
+        _EventStream_errored.set(this, false);
+        _EventStream_aborted.set(this, false);
+        _EventStream_catchingPromiseCreated.set(this, false);
+        __classPrivateFieldSet$2(this, _EventStream_connectedPromise, new Promise((resolve, reject) => {
+            __classPrivateFieldSet$2(this, _EventStream_resolveConnectedPromise, resolve, "f");
+            __classPrivateFieldSet$2(this, _EventStream_rejectConnectedPromise, reject, "f");
+        }), "f");
+        __classPrivateFieldSet$2(this, _EventStream_endPromise, new Promise((resolve, reject) => {
+            __classPrivateFieldSet$2(this, _EventStream_resolveEndPromise, resolve, "f");
+            __classPrivateFieldSet$2(this, _EventStream_rejectEndPromise, reject, "f");
+        }), "f");
+        // Don't let these promises cause unhandled rejection errors.
+        // we will manually cause an unhandled rejection error later
+        // if the user hasn't registered any error listener or called
+        // any promise-returning method.
+        __classPrivateFieldGet$3(this, _EventStream_connectedPromise, "f").catch(() => { });
+        __classPrivateFieldGet$3(this, _EventStream_endPromise, "f").catch(() => { });
+    }
+    _run(executor) {
+        // Unfortunately if we call `executor()` immediately we get runtime errors about
+        // references to `this` before the `super()` constructor call returns.
+        setTimeout(() => {
+            executor().then(() => {
+                this._emitFinal();
+                this._emit('end');
+            }, __classPrivateFieldGet$3(this, _EventStream_instances, "m", _EventStream_handleError).bind(this));
+        }, 0);
+    }
+    _connected() {
+        if (this.ended)
+            return;
+        __classPrivateFieldGet$3(this, _EventStream_resolveConnectedPromise, "f").call(this);
+        this._emit('connect');
+    }
+    get ended() {
+        return __classPrivateFieldGet$3(this, _EventStream_ended, "f");
+    }
+    get errored() {
+        return __classPrivateFieldGet$3(this, _EventStream_errored, "f");
+    }
+    get aborted() {
+        return __classPrivateFieldGet$3(this, _EventStream_aborted, "f");
+    }
+    abort() {
+        this.controller.abort();
+    }
+    /**
+     * Adds the listener function to the end of the listeners array for the event.
+     * No checks are made to see if the listener has already been added. Multiple calls passing
+     * the same combination of event and listener will result in the listener being added, and
+     * called, multiple times.
+     * @returns this ChatCompletionStream, so that calls can be chained
+     */
+    on(event, listener) {
+        const listeners = __classPrivateFieldGet$3(this, _EventStream_listeners, "f")[event] || (__classPrivateFieldGet$3(this, _EventStream_listeners, "f")[event] = []);
+        listeners.push({ listener });
+        return this;
+    }
+    /**
+     * Removes the specified listener from the listener array for the event.
+     * off() will remove, at most, one instance of a listener from the listener array. If any single
+     * listener has been added multiple times to the listener array for the specified event, then
+     * off() must be called multiple times to remove each instance.
+     * @returns this ChatCompletionStream, so that calls can be chained
+     */
+    off(event, listener) {
+        const listeners = __classPrivateFieldGet$3(this, _EventStream_listeners, "f")[event];
+        if (!listeners)
+            return this;
+        const index = listeners.findIndex((l) => l.listener === listener);
+        if (index >= 0)
+            listeners.splice(index, 1);
+        return this;
+    }
+    /**
+     * Adds a one-time listener function for the event. The next time the event is triggered,
+     * this listener is removed and then invoked.
+     * @returns this ChatCompletionStream, so that calls can be chained
+     */
+    once(event, listener) {
+        const listeners = __classPrivateFieldGet$3(this, _EventStream_listeners, "f")[event] || (__classPrivateFieldGet$3(this, _EventStream_listeners, "f")[event] = []);
+        listeners.push({ listener, once: true });
+        return this;
+    }
+    /**
+     * This is similar to `.once()`, but returns a Promise that resolves the next time
+     * the event is triggered, instead of calling a listener callback.
+     * @returns a Promise that resolves the next time given event is triggered,
+     * or rejects if an error is emitted.  (If you request the 'error' event,
+     * returns a promise that resolves with the error).
+     *
+     * Example:
+     *
+     *   const message = await stream.emitted('message') // rejects if the stream errors
+     */
+    emitted(event) {
+        return new Promise((resolve, reject) => {
+            __classPrivateFieldSet$2(this, _EventStream_catchingPromiseCreated, true, "f");
+            if (event !== 'error')
+                this.once('error', reject);
+            this.once(event, resolve);
+        });
+    }
+    async done() {
+        __classPrivateFieldSet$2(this, _EventStream_catchingPromiseCreated, true, "f");
+        await __classPrivateFieldGet$3(this, _EventStream_endPromise, "f");
+    }
+    _emit(event, ...args) {
+        // make sure we don't emit any events after end
+        if (__classPrivateFieldGet$3(this, _EventStream_ended, "f")) {
+            return;
+        }
+        if (event === 'end') {
+            __classPrivateFieldSet$2(this, _EventStream_ended, true, "f");
+            __classPrivateFieldGet$3(this, _EventStream_resolveEndPromise, "f").call(this);
+        }
+        const listeners = __classPrivateFieldGet$3(this, _EventStream_listeners, "f")[event];
+        if (listeners) {
+            __classPrivateFieldGet$3(this, _EventStream_listeners, "f")[event] = listeners.filter((l) => !l.once);
+            listeners.forEach(({ listener }) => listener(...args));
+        }
+        if (event === 'abort') {
+            const error = args[0];
+            if (!__classPrivateFieldGet$3(this, _EventStream_catchingPromiseCreated, "f") && !listeners?.length) {
+                Promise.reject(error);
+            }
+            __classPrivateFieldGet$3(this, _EventStream_rejectConnectedPromise, "f").call(this, error);
+            __classPrivateFieldGet$3(this, _EventStream_rejectEndPromise, "f").call(this, error);
+            this._emit('end');
+            return;
+        }
+        if (event === 'error') {
+            // NOTE: _emit('error', error) should only be called from #handleError().
+            const error = args[0];
+            if (!__classPrivateFieldGet$3(this, _EventStream_catchingPromiseCreated, "f") && !listeners?.length) {
+                // Trigger an unhandled rejection if the user hasn't registered any error handlers.
+                // If you are seeing stack traces here, make sure to handle errors via either:
+                // - runner.on('error', () => ...)
+                // - await runner.done()
+                // - await runner.finalChatCompletion()
+                // - etc.
+                Promise.reject(error);
+            }
+            __classPrivateFieldGet$3(this, _EventStream_rejectConnectedPromise, "f").call(this, error);
+            __classPrivateFieldGet$3(this, _EventStream_rejectEndPromise, "f").call(this, error);
+            this._emit('end');
+        }
+    }
+    _emitFinal() { }
+}
+_EventStream_connectedPromise = new WeakMap(), _EventStream_resolveConnectedPromise = new WeakMap(), _EventStream_rejectConnectedPromise = new WeakMap(), _EventStream_endPromise = new WeakMap(), _EventStream_resolveEndPromise = new WeakMap(), _EventStream_rejectEndPromise = new WeakMap(), _EventStream_listeners = new WeakMap(), _EventStream_ended = new WeakMap(), _EventStream_errored = new WeakMap(), _EventStream_aborted = new WeakMap(), _EventStream_catchingPromiseCreated = new WeakMap(), _EventStream_instances = new WeakSet(), _EventStream_handleError = function _EventStream_handleError(error) {
+    __classPrivateFieldSet$2(this, _EventStream_errored, true, "f");
+    if (error instanceof Error && error.name === 'AbortError') {
+        error = new APIUserAbortError();
+    }
+    if (error instanceof APIUserAbortError) {
+        __classPrivateFieldSet$2(this, _EventStream_aborted, true, "f");
+        return this._emit('abort', error);
+    }
+    if (error instanceof OpenAIError) {
+        return this._emit('error', error);
+    }
+    if (error instanceof Error) {
+        const openAIError = new OpenAIError(error.message);
+        // @ts-ignore
+        openAIError.cause = error;
+        return this._emit('error', openAIError);
+    }
+    return this._emit('error', new OpenAIError(String(error)));
+};
+
+function isAutoParsableResponseFormat(response_format) {
+    return response_format?.['$brand'] === 'auto-parseable-response-format';
+}
+function isAutoParsableTool(tool) {
+    return tool?.['$brand'] === 'auto-parseable-tool';
+}
+function maybeParseChatCompletion(completion, params) {
+    if (!params || !hasAutoParseableInput(params)) {
+        return {
+            ...completion,
+            choices: completion.choices.map((choice) => ({
+                ...choice,
+                message: { ...choice.message, parsed: null, tool_calls: choice.message.tool_calls ?? [] },
+            })),
+        };
+    }
+    return parseChatCompletion(completion, params);
+}
+function parseChatCompletion(completion, params) {
+    const choices = completion.choices.map((choice) => {
+        if (choice.finish_reason === 'length') {
+            throw new LengthFinishReasonError();
+        }
+        if (choice.finish_reason === 'content_filter') {
+            throw new ContentFilterFinishReasonError();
+        }
+        return {
+            ...choice,
+            message: {
+                ...choice.message,
+                tool_calls: choice.message.tool_calls?.map((toolCall) => parseToolCall(params, toolCall)) ?? [],
+                parsed: choice.message.content && !choice.message.refusal ?
+                    parseResponseFormat(params, choice.message.content)
+                    : null,
+            },
+        };
+    });
+    return { ...completion, choices };
+}
+function parseResponseFormat(params, content) {
+    if (params.response_format?.type !== 'json_schema') {
+        return null;
+    }
+    if (params.response_format?.type === 'json_schema') {
+        if ('$parseRaw' in params.response_format) {
+            const response_format = params.response_format;
+            return response_format.$parseRaw(content);
+        }
+        return JSON.parse(content);
+    }
+    return null;
+}
+function parseToolCall(params, toolCall) {
+    const inputTool = params.tools?.find((inputTool) => inputTool.function?.name === toolCall.function.name);
+    return {
+        ...toolCall,
+        function: {
+            ...toolCall.function,
+            parsed_arguments: isAutoParsableTool(inputTool) ? inputTool.$parseRaw(toolCall.function.arguments)
+                : inputTool?.function.strict ? JSON.parse(toolCall.function.arguments)
+                    : null,
+        },
+    };
+}
+function shouldParseToolCall(params, toolCall) {
+    if (!params) {
+        return false;
+    }
+    const inputTool = params.tools?.find((inputTool) => inputTool.function?.name === toolCall.function.name);
+    return isAutoParsableTool(inputTool) || inputTool?.function.strict || false;
+}
+function hasAutoParseableInput(params) {
+    if (isAutoParsableResponseFormat(params.response_format)) {
+        return true;
+    }
+    return (params.tools?.some((t) => isAutoParsableTool(t) || (t.type === 'function' && t.function.strict === true)) ?? false);
+}
+function validateInputTools(tools) {
+    for (const tool of tools ?? []) {
+        if (tool.type !== 'function') {
+            throw new OpenAIError(`Currently only \`function\` tool types support auto-parsing; Received \`${tool.type}\``);
+        }
+        if (tool.function.strict !== true) {
+            throw new OpenAIError(`The \`${tool.function.name}\` tool is not marked with \`strict: true\`. Only strict function tools can be auto-parsed`);
+        }
+    }
+}
+
+var __classPrivateFieldGet$2 = (undefined && undefined.__classPrivateFieldGet) || function (receiver, state, kind, f) {
+    if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a getter");
+    if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot read private member from an object whose class did not declare it");
+    return kind === "m" ? f : kind === "a" ? f.call(receiver) : f ? f.value : state.get(receiver);
+};
+var _AbstractChatCompletionRunner_instances, _AbstractChatCompletionRunner_getFinalContent, _AbstractChatCompletionRunner_getFinalMessage, _AbstractChatCompletionRunner_getFinalFunctionCall, _AbstractChatCompletionRunner_getFinalFunctionCallResult, _AbstractChatCompletionRunner_calculateTotalUsage, _AbstractChatCompletionRunner_validateParams, _AbstractChatCompletionRunner_stringifyFunctionCallResult;
+const DEFAULT_MAX_CHAT_COMPLETIONS = 10;
+class AbstractChatCompletionRunner extends EventStream {
+    constructor() {
+        super(...arguments);
+        _AbstractChatCompletionRunner_instances.add(this);
+        this._chatCompletions = [];
+        this.messages = [];
+    }
+    _addChatCompletion(chatCompletion) {
+        this._chatCompletions.push(chatCompletion);
+        this._emit('chatCompletion', chatCompletion);
+        const message = chatCompletion.choices[0]?.message;
+        if (message)
+            this._addMessage(message);
+        return chatCompletion;
+    }
+    _addMessage(message, emit = true) {
+        if (!('content' in message))
+            message.content = null;
+        this.messages.push(message);
+        if (emit) {
+            this._emit('message', message);
+            if ((isFunctionMessage(message) || isToolMessage(message)) && message.content) {
+                // Note, this assumes that {role: 'tool', content: …} is always the result of a call of tool of type=function.
+                this._emit('functionCallResult', message.content);
+            }
+            else if (isAssistantMessage(message) && message.function_call) {
+                this._emit('functionCall', message.function_call);
+            }
+            else if (isAssistantMessage(message) && message.tool_calls) {
+                for (const tool_call of message.tool_calls) {
+                    if (tool_call.type === 'function') {
+                        this._emit('functionCall', tool_call.function);
+                    }
+                }
+            }
+        }
+    }
+    /**
+     * @returns a promise that resolves with the final ChatCompletion, or rejects
+     * if an error occurred or the stream ended prematurely without producing a ChatCompletion.
+     */
+    async finalChatCompletion() {
+        await this.done();
+        const completion = this._chatCompletions[this._chatCompletions.length - 1];
+        if (!completion)
+            throw new OpenAIError('stream ended without producing a ChatCompletion');
+        return completion;
+    }
+    /**
+     * @returns a promise that resolves with the content of the final ChatCompletionMessage, or rejects
+     * if an error occurred or the stream ended prematurely without producing a ChatCompletionMessage.
+     */
+    async finalContent() {
+        await this.done();
+        return __classPrivateFieldGet$2(this, _AbstractChatCompletionRunner_instances, "m", _AbstractChatCompletionRunner_getFinalContent).call(this);
+    }
+    /**
+     * @returns a promise that resolves with the the final assistant ChatCompletionMessage response,
+     * or rejects if an error occurred or the stream ended prematurely without producing a ChatCompletionMessage.
+     */
+    async finalMessage() {
+        await this.done();
+        return __classPrivateFieldGet$2(this, _AbstractChatCompletionRunner_instances, "m", _AbstractChatCompletionRunner_getFinalMessage).call(this);
+    }
+    /**
+     * @returns a promise that resolves with the content of the final FunctionCall, or rejects
+     * if an error occurred or the stream ended prematurely without producing a ChatCompletionMessage.
+     */
+    async finalFunctionCall() {
+        await this.done();
+        return __classPrivateFieldGet$2(this, _AbstractChatCompletionRunner_instances, "m", _AbstractChatCompletionRunner_getFinalFunctionCall).call(this);
+    }
+    async finalFunctionCallResult() {
+        await this.done();
+        return __classPrivateFieldGet$2(this, _AbstractChatCompletionRunner_instances, "m", _AbstractChatCompletionRunner_getFinalFunctionCallResult).call(this);
+    }
+    async totalUsage() {
+        await this.done();
+        return __classPrivateFieldGet$2(this, _AbstractChatCompletionRunner_instances, "m", _AbstractChatCompletionRunner_calculateTotalUsage).call(this);
+    }
+    allChatCompletions() {
+        return [...this._chatCompletions];
+    }
+    _emitFinal() {
+        const completion = this._chatCompletions[this._chatCompletions.length - 1];
+        if (completion)
+            this._emit('finalChatCompletion', completion);
+        const finalMessage = __classPrivateFieldGet$2(this, _AbstractChatCompletionRunner_instances, "m", _AbstractChatCompletionRunner_getFinalMessage).call(this);
+        if (finalMessage)
+            this._emit('finalMessage', finalMessage);
+        const finalContent = __classPrivateFieldGet$2(this, _AbstractChatCompletionRunner_instances, "m", _AbstractChatCompletionRunner_getFinalContent).call(this);
+        if (finalContent)
+            this._emit('finalContent', finalContent);
+        const finalFunctionCall = __classPrivateFieldGet$2(this, _AbstractChatCompletionRunner_instances, "m", _AbstractChatCompletionRunner_getFinalFunctionCall).call(this);
+        if (finalFunctionCall)
+            this._emit('finalFunctionCall', finalFunctionCall);
+        const finalFunctionCallResult = __classPrivateFieldGet$2(this, _AbstractChatCompletionRunner_instances, "m", _AbstractChatCompletionRunner_getFinalFunctionCallResult).call(this);
+        if (finalFunctionCallResult != null)
+            this._emit('finalFunctionCallResult', finalFunctionCallResult);
+        if (this._chatCompletions.some((c) => c.usage)) {
+            this._emit('totalUsage', __classPrivateFieldGet$2(this, _AbstractChatCompletionRunner_instances, "m", _AbstractChatCompletionRunner_calculateTotalUsage).call(this));
+        }
+    }
+    async _createChatCompletion(client, params, options) {
+        const signal = options?.signal;
+        if (signal) {
+            if (signal.aborted)
+                this.controller.abort();
+            signal.addEventListener('abort', () => this.controller.abort());
+        }
+        __classPrivateFieldGet$2(this, _AbstractChatCompletionRunner_instances, "m", _AbstractChatCompletionRunner_validateParams).call(this, params);
+        const chatCompletion = await client.chat.completions.create({ ...params, stream: false }, { ...options, signal: this.controller.signal });
+        this._connected();
+        return this._addChatCompletion(parseChatCompletion(chatCompletion, params));
+    }
+    async _runChatCompletion(client, params, options) {
+        for (const message of params.messages) {
+            this._addMessage(message, false);
+        }
+        return await this._createChatCompletion(client, params, options);
+    }
+    async _runFunctions(client, params, options) {
+        const role = 'function';
+        const { function_call = 'auto', stream, ...restParams } = params;
+        const singleFunctionToCall = typeof function_call !== 'string' && function_call?.name;
+        const { maxChatCompletions = DEFAULT_MAX_CHAT_COMPLETIONS } = options || {};
+        const functionsByName = {};
+        for (const f of params.functions) {
+            functionsByName[f.name || f.function.name] = f;
+        }
+        const functions = params.functions.map((f) => ({
+            name: f.name || f.function.name,
+            parameters: f.parameters,
+            description: f.description,
+        }));
+        for (const message of params.messages) {
+            this._addMessage(message, false);
+        }
+        for (let i = 0; i < maxChatCompletions; ++i) {
+            const chatCompletion = await this._createChatCompletion(client, {
+                ...restParams,
+                function_call,
+                functions,
+                messages: [...this.messages],
+            }, options);
+            const message = chatCompletion.choices[0]?.message;
+            if (!message) {
+                throw new OpenAIError(`missing message in ChatCompletion response`);
+            }
+            if (!message.function_call)
+                return;
+            const { name, arguments: args } = message.function_call;
+            const fn = functionsByName[name];
+            if (!fn) {
+                const content = `Invalid function_call: ${JSON.stringify(name)}. Available options are: ${functions
+                    .map((f) => JSON.stringify(f.name))
+                    .join(', ')}. Please try again`;
+                this._addMessage({ role, name, content });
+                continue;
+            }
+            else if (singleFunctionToCall && singleFunctionToCall !== name) {
+                const content = `Invalid function_call: ${JSON.stringify(name)}. ${JSON.stringify(singleFunctionToCall)} requested. Please try again`;
+                this._addMessage({ role, name, content });
+                continue;
+            }
+            let parsed;
+            try {
+                parsed = isRunnableFunctionWithParse(fn) ? await fn.parse(args) : args;
+            }
+            catch (error) {
+                this._addMessage({
+                    role,
+                    name,
+                    content: error instanceof Error ? error.message : String(error),
+                });
+                continue;
+            }
+            // @ts-expect-error it can't rule out `never` type.
+            const rawContent = await fn.function(parsed, this);
+            const content = __classPrivateFieldGet$2(this, _AbstractChatCompletionRunner_instances, "m", _AbstractChatCompletionRunner_stringifyFunctionCallResult).call(this, rawContent);
+            this._addMessage({ role, name, content });
+            if (singleFunctionToCall)
+                return;
+        }
+    }
+    async _runTools(client, params, options) {
+        const role = 'tool';
+        const { tool_choice = 'auto', stream, ...restParams } = params;
+        const singleFunctionToCall = typeof tool_choice !== 'string' && tool_choice?.function?.name;
+        const { maxChatCompletions = DEFAULT_MAX_CHAT_COMPLETIONS } = options || {};
+        // TODO(someday): clean this logic up
+        const inputTools = params.tools.map((tool) => {
+            if (isAutoParsableTool(tool)) {
+                if (!tool.$callback) {
+                    throw new OpenAIError('Tool given to `.runTools()` that does not have an associated function');
+                }
+                return {
+                    type: 'function',
+                    function: {
+                        function: tool.$callback,
+                        name: tool.function.name,
+                        description: tool.function.description || '',
+                        parameters: tool.function.parameters,
+                        parse: tool.$parseRaw,
+                        strict: true,
+                    },
+                };
+            }
+            return tool;
+        });
+        const functionsByName = {};
+        for (const f of inputTools) {
+            if (f.type === 'function') {
+                functionsByName[f.function.name || f.function.function.name] = f.function;
+            }
+        }
+        const tools = 'tools' in params ?
+            inputTools.map((t) => t.type === 'function' ?
+                {
+                    type: 'function',
+                    function: {
+                        name: t.function.name || t.function.function.name,
+                        parameters: t.function.parameters,
+                        description: t.function.description,
+                        strict: t.function.strict,
+                    },
+                }
+                : t)
+            : undefined;
+        for (const message of params.messages) {
+            this._addMessage(message, false);
+        }
+        for (let i = 0; i < maxChatCompletions; ++i) {
+            const chatCompletion = await this._createChatCompletion(client, {
+                ...restParams,
+                tool_choice,
+                tools,
+                messages: [...this.messages],
+            }, options);
+            const message = chatCompletion.choices[0]?.message;
+            if (!message) {
+                throw new OpenAIError(`missing message in ChatCompletion response`);
+            }
+            if (!message.tool_calls?.length) {
+                return;
+            }
+            for (const tool_call of message.tool_calls) {
+                if (tool_call.type !== 'function')
+                    continue;
+                const tool_call_id = tool_call.id;
+                const { name, arguments: args } = tool_call.function;
+                const fn = functionsByName[name];
+                if (!fn) {
+                    const content = `Invalid tool_call: ${JSON.stringify(name)}. Available options are: ${Object.keys(functionsByName)
+                        .map((name) => JSON.stringify(name))
+                        .join(', ')}. Please try again`;
+                    this._addMessage({ role, tool_call_id, content });
+                    continue;
+                }
+                else if (singleFunctionToCall && singleFunctionToCall !== name) {
+                    const content = `Invalid tool_call: ${JSON.stringify(name)}. ${JSON.stringify(singleFunctionToCall)} requested. Please try again`;
+                    this._addMessage({ role, tool_call_id, content });
+                    continue;
+                }
+                let parsed;
+                try {
+                    parsed = isRunnableFunctionWithParse(fn) ? await fn.parse(args) : args;
+                }
+                catch (error) {
+                    const content = error instanceof Error ? error.message : String(error);
+                    this._addMessage({ role, tool_call_id, content });
+                    continue;
+                }
+                // @ts-expect-error it can't rule out `never` type.
+                const rawContent = await fn.function(parsed, this);
+                const content = __classPrivateFieldGet$2(this, _AbstractChatCompletionRunner_instances, "m", _AbstractChatCompletionRunner_stringifyFunctionCallResult).call(this, rawContent);
+                this._addMessage({ role, tool_call_id, content });
+                if (singleFunctionToCall) {
+                    return;
+                }
+            }
+        }
+        return;
+    }
+}
+_AbstractChatCompletionRunner_instances = new WeakSet(), _AbstractChatCompletionRunner_getFinalContent = function _AbstractChatCompletionRunner_getFinalContent() {
+    return __classPrivateFieldGet$2(this, _AbstractChatCompletionRunner_instances, "m", _AbstractChatCompletionRunner_getFinalMessage).call(this).content ?? null;
+}, _AbstractChatCompletionRunner_getFinalMessage = function _AbstractChatCompletionRunner_getFinalMessage() {
+    let i = this.messages.length;
+    while (i-- > 0) {
+        const message = this.messages[i];
+        if (isAssistantMessage(message)) {
+            const { function_call, ...rest } = message;
+            // TODO: support audio here
+            const ret = {
+                ...rest,
+                content: message.content ?? null,
+                refusal: message.refusal ?? null,
+            };
+            if (function_call) {
+                ret.function_call = function_call;
+            }
+            return ret;
+        }
+    }
+    throw new OpenAIError('stream ended without producing a ChatCompletionMessage with role=assistant');
+}, _AbstractChatCompletionRunner_getFinalFunctionCall = function _AbstractChatCompletionRunner_getFinalFunctionCall() {
+    for (let i = this.messages.length - 1; i >= 0; i--) {
+        const message = this.messages[i];
+        if (isAssistantMessage(message) && message?.function_call) {
+            return message.function_call;
+        }
+        if (isAssistantMessage(message) && message?.tool_calls?.length) {
+            return message.tool_calls.at(-1)?.function;
+        }
+    }
+    return;
+}, _AbstractChatCompletionRunner_getFinalFunctionCallResult = function _AbstractChatCompletionRunner_getFinalFunctionCallResult() {
+    for (let i = this.messages.length - 1; i >= 0; i--) {
+        const message = this.messages[i];
+        if (isFunctionMessage(message) && message.content != null) {
+            return message.content;
+        }
+        if (isToolMessage(message) &&
+            message.content != null &&
+            typeof message.content === 'string' &&
+            this.messages.some((x) => x.role === 'assistant' &&
+                x.tool_calls?.some((y) => y.type === 'function' && y.id === message.tool_call_id))) {
+            return message.content;
+        }
+    }
+    return;
+}, _AbstractChatCompletionRunner_calculateTotalUsage = function _AbstractChatCompletionRunner_calculateTotalUsage() {
+    const total = {
+        completion_tokens: 0,
+        prompt_tokens: 0,
+        total_tokens: 0,
+    };
+    for (const { usage } of this._chatCompletions) {
+        if (usage) {
+            total.completion_tokens += usage.completion_tokens;
+            total.prompt_tokens += usage.prompt_tokens;
+            total.total_tokens += usage.total_tokens;
+        }
+    }
+    return total;
+}, _AbstractChatCompletionRunner_validateParams = function _AbstractChatCompletionRunner_validateParams(params) {
+    if (params.n != null && params.n > 1) {
+        throw new OpenAIError('ChatCompletion convenience helpers only support n=1 at this time. To use n>1, please use chat.completions.create() directly.');
+    }
+}, _AbstractChatCompletionRunner_stringifyFunctionCallResult = function _AbstractChatCompletionRunner_stringifyFunctionCallResult(rawContent) {
+    return (typeof rawContent === 'string' ? rawContent
+        : rawContent === undefined ? 'undefined'
+            : JSON.stringify(rawContent));
+};
+
+class ChatCompletionRunner extends AbstractChatCompletionRunner {
+    /** @deprecated - please use `runTools` instead. */
+    static runFunctions(client, params, options) {
+        const runner = new ChatCompletionRunner();
+        const opts = {
+            ...options,
+            headers: { ...options?.headers, 'X-Stainless-Helper-Method': 'runFunctions' },
+        };
+        runner._run(() => runner._runFunctions(client, params, opts));
+        return runner;
+    }
+    static runTools(client, params, options) {
+        const runner = new ChatCompletionRunner();
+        const opts = {
+            ...options,
+            headers: { ...options?.headers, 'X-Stainless-Helper-Method': 'runTools' },
+        };
+        runner._run(() => runner._runTools(client, params, opts));
+        return runner;
+    }
+    _addMessage(message, emit = true) {
+        super._addMessage(message, emit);
+        if (isAssistantMessage(message) && message.content) {
+            this._emit('content', message.content);
+        }
+    }
+}
+
+const STR = 0b000000001;
+const NUM = 0b000000010;
+const ARR = 0b000000100;
+const OBJ = 0b000001000;
+const NULL = 0b000010000;
+const BOOL = 0b000100000;
+const NAN = 0b001000000;
+const INFINITY = 0b010000000;
+const MINUS_INFINITY = 0b100000000;
+const INF = INFINITY | MINUS_INFINITY;
+const SPECIAL = NULL | BOOL | INF | NAN;
+const ATOM = STR | NUM | SPECIAL;
+const COLLECTION = ARR | OBJ;
+const ALL = ATOM | COLLECTION;
+const Allow = {
+    STR,
+    NUM,
+    ARR,
+    OBJ,
+    NULL,
+    BOOL,
+    NAN,
+    INFINITY,
+    MINUS_INFINITY,
+    INF,
+    SPECIAL,
+    ATOM,
+    COLLECTION,
+    ALL,
+};
+// The JSON string segment was unable to be parsed completely
+class PartialJSON extends Error {
+}
+class MalformedJSON extends Error {
+}
+/**
+ * Parse incomplete JSON
+ * @param {string} jsonString Partial JSON to be parsed
+ * @param {number} allowPartial Specify what types are allowed to be partial, see {@link Allow} for details
+ * @returns The parsed JSON
+ * @throws {PartialJSON} If the JSON is incomplete (related to the `allow` parameter)
+ * @throws {MalformedJSON} If the JSON is malformed
+ */
+function parseJSON(jsonString, allowPartial = Allow.ALL) {
+    if (typeof jsonString !== 'string') {
+        throw new TypeError(`expecting str, got ${typeof jsonString}`);
+    }
+    if (!jsonString.trim()) {
+        throw new Error(`${jsonString} is empty`);
+    }
+    return _parseJSON(jsonString.trim(), allowPartial);
+}
+const _parseJSON = (jsonString, allow) => {
+    const length = jsonString.length;
+    let index = 0;
+    const markPartialJSON = (msg) => {
+        throw new PartialJSON(`${msg} at position ${index}`);
+    };
+    const throwMalformedError = (msg) => {
+        throw new MalformedJSON(`${msg} at position ${index}`);
+    };
+    const parseAny = () => {
+        skipBlank();
+        if (index >= length)
+            markPartialJSON('Unexpected end of input');
+        if (jsonString[index] === '"')
+            return parseStr();
+        if (jsonString[index] === '{')
+            return parseObj();
+        if (jsonString[index] === '[')
+            return parseArr();
+        if (jsonString.substring(index, index + 4) === 'null' ||
+            (Allow.NULL & allow && length - index < 4 && 'null'.startsWith(jsonString.substring(index)))) {
+            index += 4;
+            return null;
+        }
+        if (jsonString.substring(index, index + 4) === 'true' ||
+            (Allow.BOOL & allow && length - index < 4 && 'true'.startsWith(jsonString.substring(index)))) {
+            index += 4;
+            return true;
+        }
+        if (jsonString.substring(index, index + 5) === 'false' ||
+            (Allow.BOOL & allow && length - index < 5 && 'false'.startsWith(jsonString.substring(index)))) {
+            index += 5;
+            return false;
+        }
+        if (jsonString.substring(index, index + 8) === 'Infinity' ||
+            (Allow.INFINITY & allow && length - index < 8 && 'Infinity'.startsWith(jsonString.substring(index)))) {
+            index += 8;
+            return Infinity;
+        }
+        if (jsonString.substring(index, index + 9) === '-Infinity' ||
+            (Allow.MINUS_INFINITY & allow &&
+                1 < length - index &&
+                length - index < 9 &&
+                '-Infinity'.startsWith(jsonString.substring(index)))) {
+            index += 9;
+            return -Infinity;
+        }
+        if (jsonString.substring(index, index + 3) === 'NaN' ||
+            (Allow.NAN & allow && length - index < 3 && 'NaN'.startsWith(jsonString.substring(index)))) {
+            index += 3;
+            return NaN;
+        }
+        return parseNum();
+    };
+    const parseStr = () => {
+        const start = index;
+        let escape = false;
+        index++; // skip initial quote
+        while (index < length && (jsonString[index] !== '"' || (escape && jsonString[index - 1] === '\\'))) {
+            escape = jsonString[index] === '\\' ? !escape : false;
+            index++;
+        }
+        if (jsonString.charAt(index) == '"') {
+            try {
+                return JSON.parse(jsonString.substring(start, ++index - Number(escape)));
+            }
+            catch (e) {
+                throwMalformedError(String(e));
+            }
+        }
+        else if (Allow.STR & allow) {
+            try {
+                return JSON.parse(jsonString.substring(start, index - Number(escape)) + '"');
+            }
+            catch (e) {
+                // SyntaxError: Invalid escape sequence
+                return JSON.parse(jsonString.substring(start, jsonString.lastIndexOf('\\')) + '"');
+            }
+        }
+        markPartialJSON('Unterminated string literal');
+    };
+    const parseObj = () => {
+        index++; // skip initial brace
+        skipBlank();
+        const obj = {};
+        try {
+            while (jsonString[index] !== '}') {
+                skipBlank();
+                if (index >= length && Allow.OBJ & allow)
+                    return obj;
+                const key = parseStr();
+                skipBlank();
+                index++; // skip colon
+                try {
+                    const value = parseAny();
+                    Object.defineProperty(obj, key, { value, writable: true, enumerable: true, configurable: true });
+                }
+                catch (e) {
+                    if (Allow.OBJ & allow)
+                        return obj;
+                    else
+                        throw e;
+                }
+                skipBlank();
+                if (jsonString[index] === ',')
+                    index++; // skip comma
+            }
+        }
+        catch (e) {
+            if (Allow.OBJ & allow)
+                return obj;
+            else
+                markPartialJSON("Expected '}' at end of object");
+        }
+        index++; // skip final brace
+        return obj;
+    };
+    const parseArr = () => {
+        index++; // skip initial bracket
+        const arr = [];
+        try {
+            while (jsonString[index] !== ']') {
+                arr.push(parseAny());
+                skipBlank();
+                if (jsonString[index] === ',') {
+                    index++; // skip comma
+                }
+            }
+        }
+        catch (e) {
+            if (Allow.ARR & allow) {
+                return arr;
+            }
+            markPartialJSON("Expected ']' at end of array");
+        }
+        index++; // skip final bracket
+        return arr;
+    };
+    const parseNum = () => {
+        if (index === 0) {
+            if (jsonString === '-' && Allow.NUM & allow)
+                markPartialJSON("Not sure what '-' is");
+            try {
+                return JSON.parse(jsonString);
+            }
+            catch (e) {
+                if (Allow.NUM & allow) {
+                    try {
+                        if ('.' === jsonString[jsonString.length - 1])
+                            return JSON.parse(jsonString.substring(0, jsonString.lastIndexOf('.')));
+                        return JSON.parse(jsonString.substring(0, jsonString.lastIndexOf('e')));
+                    }
+                    catch (e) { }
+                }
+                throwMalformedError(String(e));
+            }
+        }
+        const start = index;
+        if (jsonString[index] === '-')
+            index++;
+        while (jsonString[index] && !',]}'.includes(jsonString[index]))
+            index++;
+        if (index == length && !(Allow.NUM & allow))
+            markPartialJSON('Unterminated number literal');
+        try {
+            return JSON.parse(jsonString.substring(start, index));
+        }
+        catch (e) {
+            if (jsonString.substring(start, index) === '-' && Allow.NUM & allow)
+                markPartialJSON("Not sure what '-' is");
+            try {
+                return JSON.parse(jsonString.substring(start, jsonString.lastIndexOf('e')));
+            }
+            catch (e) {
+                throwMalformedError(String(e));
+            }
+        }
+    };
+    const skipBlank = () => {
+        while (index < length && ' \n\r\t'.includes(jsonString[index])) {
+            index++;
+        }
+    };
+    return parseAny();
+};
+// using this function with malformed JSON is undefined behavior
+const partialParse = (input) => parseJSON(input, Allow.ALL ^ Allow.NUM);
+
+var __classPrivateFieldSet$1 = (undefined && undefined.__classPrivateFieldSet) || function (receiver, state, value, kind, f) {
+    if (kind === "m") throw new TypeError("Private method is not writable");
+    if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a setter");
+    if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot write private member to an object whose class did not declare it");
+    return (kind === "a" ? f.call(receiver, value) : f ? f.value = value : state.set(receiver, value)), value;
+};
+var __classPrivateFieldGet$1 = (undefined && undefined.__classPrivateFieldGet) || function (receiver, state, kind, f) {
+    if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a getter");
+    if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot read private member from an object whose class did not declare it");
+    return kind === "m" ? f : kind === "a" ? f.call(receiver) : f ? f.value : state.get(receiver);
+};
+var _ChatCompletionStream_instances, _ChatCompletionStream_params, _ChatCompletionStream_choiceEventStates, _ChatCompletionStream_currentChatCompletionSnapshot, _ChatCompletionStream_beginRequest, _ChatCompletionStream_getChoiceEventState, _ChatCompletionStream_addChunk, _ChatCompletionStream_emitToolCallDoneEvent, _ChatCompletionStream_emitContentDoneEvents, _ChatCompletionStream_endRequest, _ChatCompletionStream_getAutoParseableResponseFormat, _ChatCompletionStream_accumulateChatCompletion;
+class ChatCompletionStream extends AbstractChatCompletionRunner {
+    constructor(params) {
+        super();
+        _ChatCompletionStream_instances.add(this);
+        _ChatCompletionStream_params.set(this, undefined);
+        _ChatCompletionStream_choiceEventStates.set(this, undefined);
+        _ChatCompletionStream_currentChatCompletionSnapshot.set(this, undefined);
+        __classPrivateFieldSet$1(this, _ChatCompletionStream_params, params, "f");
+        __classPrivateFieldSet$1(this, _ChatCompletionStream_choiceEventStates, [], "f");
+    }
+    get currentChatCompletionSnapshot() {
+        return __classPrivateFieldGet$1(this, _ChatCompletionStream_currentChatCompletionSnapshot, "f");
+    }
+    /**
+     * Intended for use on the frontend, consuming a stream produced with
+     * `.toReadableStream()` on the backend.
+     *
+     * Note that messages sent to the model do not appear in `.on('message')`
+     * in this context.
+     */
+    static fromReadableStream(stream) {
+        const runner = new ChatCompletionStream(null);
+        runner._run(() => runner._fromReadableStream(stream));
+        return runner;
+    }
+    static createChatCompletion(client, params, options) {
+        const runner = new ChatCompletionStream(params);
+        runner._run(() => runner._runChatCompletion(client, { ...params, stream: true }, { ...options, headers: { ...options?.headers, 'X-Stainless-Helper-Method': 'stream' } }));
+        return runner;
+    }
+    async _createChatCompletion(client, params, options) {
+        super._createChatCompletion;
+        const signal = options?.signal;
+        if (signal) {
+            if (signal.aborted)
+                this.controller.abort();
+            signal.addEventListener('abort', () => this.controller.abort());
+        }
+        __classPrivateFieldGet$1(this, _ChatCompletionStream_instances, "m", _ChatCompletionStream_beginRequest).call(this);
+        const stream = await client.chat.completions.create({ ...params, stream: true }, { ...options, signal: this.controller.signal });
+        this._connected();
+        for await (const chunk of stream) {
+            __classPrivateFieldGet$1(this, _ChatCompletionStream_instances, "m", _ChatCompletionStream_addChunk).call(this, chunk);
+        }
+        if (stream.controller.signal?.aborted) {
+            throw new APIUserAbortError();
+        }
+        return this._addChatCompletion(__classPrivateFieldGet$1(this, _ChatCompletionStream_instances, "m", _ChatCompletionStream_endRequest).call(this));
+    }
+    async _fromReadableStream(readableStream, options) {
+        const signal = options?.signal;
+        if (signal) {
+            if (signal.aborted)
+                this.controller.abort();
+            signal.addEventListener('abort', () => this.controller.abort());
+        }
+        __classPrivateFieldGet$1(this, _ChatCompletionStream_instances, "m", _ChatCompletionStream_beginRequest).call(this);
+        this._connected();
+        const stream = Stream.fromReadableStream(readableStream, this.controller);
+        let chatId;
+        for await (const chunk of stream) {
+            if (chatId && chatId !== chunk.id) {
+                // A new request has been made.
+                this._addChatCompletion(__classPrivateFieldGet$1(this, _ChatCompletionStream_instances, "m", _ChatCompletionStream_endRequest).call(this));
+            }
+            __classPrivateFieldGet$1(this, _ChatCompletionStream_instances, "m", _ChatCompletionStream_addChunk).call(this, chunk);
+            chatId = chunk.id;
+        }
+        if (stream.controller.signal?.aborted) {
+            throw new APIUserAbortError();
+        }
+        return this._addChatCompletion(__classPrivateFieldGet$1(this, _ChatCompletionStream_instances, "m", _ChatCompletionStream_endRequest).call(this));
+    }
+    [(_ChatCompletionStream_params = new WeakMap(), _ChatCompletionStream_choiceEventStates = new WeakMap(), _ChatCompletionStream_currentChatCompletionSnapshot = new WeakMap(), _ChatCompletionStream_instances = new WeakSet(), _ChatCompletionStream_beginRequest = function _ChatCompletionStream_beginRequest() {
+        if (this.ended)
+            return;
+        __classPrivateFieldSet$1(this, _ChatCompletionStream_currentChatCompletionSnapshot, undefined, "f");
+    }, _ChatCompletionStream_getChoiceEventState = function _ChatCompletionStream_getChoiceEventState(choice) {
+        let state = __classPrivateFieldGet$1(this, _ChatCompletionStream_choiceEventStates, "f")[choice.index];
+        if (state) {
+            return state;
+        }
+        state = {
+            content_done: false,
+            refusal_done: false,
+            logprobs_content_done: false,
+            logprobs_refusal_done: false,
+            done_tool_calls: new Set(),
+            current_tool_call_index: null,
+        };
+        __classPrivateFieldGet$1(this, _ChatCompletionStream_choiceEventStates, "f")[choice.index] = state;
+        return state;
+    }, _ChatCompletionStream_addChunk = function _ChatCompletionStream_addChunk(chunk) {
+        if (this.ended)
+            return;
+        const completion = __classPrivateFieldGet$1(this, _ChatCompletionStream_instances, "m", _ChatCompletionStream_accumulateChatCompletion).call(this, chunk);
+        this._emit('chunk', chunk, completion);
+        for (const choice of chunk.choices) {
+            const choiceSnapshot = completion.choices[choice.index];
+            if (choice.delta.content != null &&
+                choiceSnapshot.message?.role === 'assistant' &&
+                choiceSnapshot.message?.content) {
+                this._emit('content', choice.delta.content, choiceSnapshot.message.content);
+                this._emit('content.delta', {
+                    delta: choice.delta.content,
+                    snapshot: choiceSnapshot.message.content,
+                    parsed: choiceSnapshot.message.parsed,
+                });
+            }
+            if (choice.delta.refusal != null &&
+                choiceSnapshot.message?.role === 'assistant' &&
+                choiceSnapshot.message?.refusal) {
+                this._emit('refusal.delta', {
+                    delta: choice.delta.refusal,
+                    snapshot: choiceSnapshot.message.refusal,
+                });
+            }
+            if (choice.logprobs?.content != null && choiceSnapshot.message?.role === 'assistant') {
+                this._emit('logprobs.content.delta', {
+                    content: choice.logprobs?.content,
+                    snapshot: choiceSnapshot.logprobs?.content ?? [],
+                });
+            }
+            if (choice.logprobs?.refusal != null && choiceSnapshot.message?.role === 'assistant') {
+                this._emit('logprobs.refusal.delta', {
+                    refusal: choice.logprobs?.refusal,
+                    snapshot: choiceSnapshot.logprobs?.refusal ?? [],
+                });
+            }
+            const state = __classPrivateFieldGet$1(this, _ChatCompletionStream_instances, "m", _ChatCompletionStream_getChoiceEventState).call(this, choiceSnapshot);
+            if (choiceSnapshot.finish_reason) {
+                __classPrivateFieldGet$1(this, _ChatCompletionStream_instances, "m", _ChatCompletionStream_emitContentDoneEvents).call(this, choiceSnapshot);
+                if (state.current_tool_call_index != null) {
+                    __classPrivateFieldGet$1(this, _ChatCompletionStream_instances, "m", _ChatCompletionStream_emitToolCallDoneEvent).call(this, choiceSnapshot, state.current_tool_call_index);
+                }
+            }
+            for (const toolCall of choice.delta.tool_calls ?? []) {
+                if (state.current_tool_call_index !== toolCall.index) {
+                    __classPrivateFieldGet$1(this, _ChatCompletionStream_instances, "m", _ChatCompletionStream_emitContentDoneEvents).call(this, choiceSnapshot);
+                    // new tool call started, the previous one is done
+                    if (state.current_tool_call_index != null) {
+                        __classPrivateFieldGet$1(this, _ChatCompletionStream_instances, "m", _ChatCompletionStream_emitToolCallDoneEvent).call(this, choiceSnapshot, state.current_tool_call_index);
+                    }
+                }
+                state.current_tool_call_index = toolCall.index;
+            }
+            for (const toolCallDelta of choice.delta.tool_calls ?? []) {
+                const toolCallSnapshot = choiceSnapshot.message.tool_calls?.[toolCallDelta.index];
+                if (!toolCallSnapshot?.type) {
+                    continue;
+                }
+                if (toolCallSnapshot?.type === 'function') {
+                    this._emit('tool_calls.function.arguments.delta', {
+                        name: toolCallSnapshot.function?.name,
+                        index: toolCallDelta.index,
+                        arguments: toolCallSnapshot.function.arguments,
+                        parsed_arguments: toolCallSnapshot.function.parsed_arguments,
+                        arguments_delta: toolCallDelta.function?.arguments ?? '',
+                    });
+                }
+                else {
+                    assertNever(toolCallSnapshot?.type);
+                }
+            }
+        }
+    }, _ChatCompletionStream_emitToolCallDoneEvent = function _ChatCompletionStream_emitToolCallDoneEvent(choiceSnapshot, toolCallIndex) {
+        const state = __classPrivateFieldGet$1(this, _ChatCompletionStream_instances, "m", _ChatCompletionStream_getChoiceEventState).call(this, choiceSnapshot);
+        if (state.done_tool_calls.has(toolCallIndex)) {
+            // we've already fired the done event
+            return;
+        }
+        const toolCallSnapshot = choiceSnapshot.message.tool_calls?.[toolCallIndex];
+        if (!toolCallSnapshot) {
+            throw new Error('no tool call snapshot');
+        }
+        if (!toolCallSnapshot.type) {
+            throw new Error('tool call snapshot missing `type`');
+        }
+        if (toolCallSnapshot.type === 'function') {
+            const inputTool = __classPrivateFieldGet$1(this, _ChatCompletionStream_params, "f")?.tools?.find((tool) => tool.type === 'function' && tool.function.name === toolCallSnapshot.function.name);
+            this._emit('tool_calls.function.arguments.done', {
+                name: toolCallSnapshot.function.name,
+                index: toolCallIndex,
+                arguments: toolCallSnapshot.function.arguments,
+                parsed_arguments: isAutoParsableTool(inputTool) ? inputTool.$parseRaw(toolCallSnapshot.function.arguments)
+                    : inputTool?.function.strict ? JSON.parse(toolCallSnapshot.function.arguments)
+                        : null,
+            });
+        }
+        else {
+            assertNever(toolCallSnapshot.type);
+        }
+    }, _ChatCompletionStream_emitContentDoneEvents = function _ChatCompletionStream_emitContentDoneEvents(choiceSnapshot) {
+        const state = __classPrivateFieldGet$1(this, _ChatCompletionStream_instances, "m", _ChatCompletionStream_getChoiceEventState).call(this, choiceSnapshot);
+        if (choiceSnapshot.message.content && !state.content_done) {
+            state.content_done = true;
+            const responseFormat = __classPrivateFieldGet$1(this, _ChatCompletionStream_instances, "m", _ChatCompletionStream_getAutoParseableResponseFormat).call(this);
+            this._emit('content.done', {
+                content: choiceSnapshot.message.content,
+                parsed: responseFormat ? responseFormat.$parseRaw(choiceSnapshot.message.content) : null,
+            });
+        }
+        if (choiceSnapshot.message.refusal && !state.refusal_done) {
+            state.refusal_done = true;
+            this._emit('refusal.done', { refusal: choiceSnapshot.message.refusal });
+        }
+        if (choiceSnapshot.logprobs?.content && !state.logprobs_content_done) {
+            state.logprobs_content_done = true;
+            this._emit('logprobs.content.done', { content: choiceSnapshot.logprobs.content });
+        }
+        if (choiceSnapshot.logprobs?.refusal && !state.logprobs_refusal_done) {
+            state.logprobs_refusal_done = true;
+            this._emit('logprobs.refusal.done', { refusal: choiceSnapshot.logprobs.refusal });
+        }
+    }, _ChatCompletionStream_endRequest = function _ChatCompletionStream_endRequest() {
+        if (this.ended) {
+            throw new OpenAIError(`stream has ended, this shouldn't happen`);
+        }
+        const snapshot = __classPrivateFieldGet$1(this, _ChatCompletionStream_currentChatCompletionSnapshot, "f");
+        if (!snapshot) {
+            throw new OpenAIError(`request ended without sending any chunks`);
+        }
+        __classPrivateFieldSet$1(this, _ChatCompletionStream_currentChatCompletionSnapshot, undefined, "f");
+        __classPrivateFieldSet$1(this, _ChatCompletionStream_choiceEventStates, [], "f");
+        return finalizeChatCompletion(snapshot, __classPrivateFieldGet$1(this, _ChatCompletionStream_params, "f"));
+    }, _ChatCompletionStream_getAutoParseableResponseFormat = function _ChatCompletionStream_getAutoParseableResponseFormat() {
+        const responseFormat = __classPrivateFieldGet$1(this, _ChatCompletionStream_params, "f")?.response_format;
+        if (isAutoParsableResponseFormat(responseFormat)) {
+            return responseFormat;
+        }
+        return null;
+    }, _ChatCompletionStream_accumulateChatCompletion = function _ChatCompletionStream_accumulateChatCompletion(chunk) {
+        var _a, _b, _c, _d;
+        let snapshot = __classPrivateFieldGet$1(this, _ChatCompletionStream_currentChatCompletionSnapshot, "f");
+        const { choices, ...rest } = chunk;
+        if (!snapshot) {
+            snapshot = __classPrivateFieldSet$1(this, _ChatCompletionStream_currentChatCompletionSnapshot, {
+                ...rest,
+                choices: [],
+            }, "f");
+        }
+        else {
+            Object.assign(snapshot, rest);
+        }
+        for (const { delta, finish_reason, index, logprobs = null, ...other } of chunk.choices) {
+            let choice = snapshot.choices[index];
+            if (!choice) {
+                choice = snapshot.choices[index] = { finish_reason, index, message: {}, logprobs, ...other };
+            }
+            if (logprobs) {
+                if (!choice.logprobs) {
+                    choice.logprobs = Object.assign({}, logprobs);
+                }
+                else {
+                    const { content, refusal, ...rest } = logprobs;
+                    Object.assign(choice.logprobs, rest);
+                    if (content) {
+                        (_a = choice.logprobs).content ?? (_a.content = []);
+                        choice.logprobs.content.push(...content);
+                    }
+                    if (refusal) {
+                        (_b = choice.logprobs).refusal ?? (_b.refusal = []);
+                        choice.logprobs.refusal.push(...refusal);
+                    }
+                }
+            }
+            if (finish_reason) {
+                choice.finish_reason = finish_reason;
+                if (__classPrivateFieldGet$1(this, _ChatCompletionStream_params, "f") && hasAutoParseableInput(__classPrivateFieldGet$1(this, _ChatCompletionStream_params, "f"))) {
+                    if (finish_reason === 'length') {
+                        throw new LengthFinishReasonError();
+                    }
+                    if (finish_reason === 'content_filter') {
+                        throw new ContentFilterFinishReasonError();
+                    }
+                }
+            }
+            Object.assign(choice, other);
+            if (!delta)
+                continue; // Shouldn't happen; just in case.
+            const { content, refusal, function_call, role, tool_calls, ...rest } = delta;
+            Object.assign(choice.message, rest);
+            if (refusal) {
+                choice.message.refusal = (choice.message.refusal || '') + refusal;
+            }
+            if (role)
+                choice.message.role = role;
+            if (function_call) {
+                if (!choice.message.function_call) {
+                    choice.message.function_call = function_call;
+                }
+                else {
+                    if (function_call.name)
+                        choice.message.function_call.name = function_call.name;
+                    if (function_call.arguments) {
+                        (_c = choice.message.function_call).arguments ?? (_c.arguments = '');
+                        choice.message.function_call.arguments += function_call.arguments;
+                    }
+                }
+            }
+            if (content) {
+                choice.message.content = (choice.message.content || '') + content;
+                if (!choice.message.refusal && __classPrivateFieldGet$1(this, _ChatCompletionStream_instances, "m", _ChatCompletionStream_getAutoParseableResponseFormat).call(this)) {
+                    choice.message.parsed = partialParse(choice.message.content);
+                }
+            }
+            if (tool_calls) {
+                if (!choice.message.tool_calls)
+                    choice.message.tool_calls = [];
+                for (const { index, id, type, function: fn, ...rest } of tool_calls) {
+                    const tool_call = ((_d = choice.message.tool_calls)[index] ?? (_d[index] = {}));
+                    Object.assign(tool_call, rest);
+                    if (id)
+                        tool_call.id = id;
+                    if (type)
+                        tool_call.type = type;
+                    if (fn)
+                        tool_call.function ?? (tool_call.function = { name: fn.name ?? '', arguments: '' });
+                    if (fn?.name)
+                        tool_call.function.name = fn.name;
+                    if (fn?.arguments) {
+                        tool_call.function.arguments += fn.arguments;
+                        if (shouldParseToolCall(__classPrivateFieldGet$1(this, _ChatCompletionStream_params, "f"), tool_call)) {
+                            tool_call.function.parsed_arguments = partialParse(tool_call.function.arguments);
+                        }
+                    }
+                }
+            }
+        }
+        return snapshot;
+    }, Symbol.asyncIterator)]() {
+        const pushQueue = [];
+        const readQueue = [];
+        let done = false;
+        this.on('chunk', (chunk) => {
+            const reader = readQueue.shift();
+            if (reader) {
+                reader.resolve(chunk);
+            }
+            else {
+                pushQueue.push(chunk);
+            }
+        });
+        this.on('end', () => {
+            done = true;
+            for (const reader of readQueue) {
+                reader.resolve(undefined);
+            }
+            readQueue.length = 0;
+        });
+        this.on('abort', (err) => {
+            done = true;
+            for (const reader of readQueue) {
+                reader.reject(err);
+            }
+            readQueue.length = 0;
+        });
+        this.on('error', (err) => {
+            done = true;
+            for (const reader of readQueue) {
+                reader.reject(err);
+            }
+            readQueue.length = 0;
+        });
+        return {
+            next: async () => {
+                if (!pushQueue.length) {
+                    if (done) {
+                        return { value: undefined, done: true };
+                    }
+                    return new Promise((resolve, reject) => readQueue.push({ resolve, reject })).then((chunk) => (chunk ? { value: chunk, done: false } : { value: undefined, done: true }));
+                }
+                const chunk = pushQueue.shift();
+                return { value: chunk, done: false };
+            },
+            return: async () => {
+                this.abort();
+                return { value: undefined, done: true };
+            },
+        };
+    }
+    toReadableStream() {
+        const stream = new Stream(this[Symbol.asyncIterator].bind(this), this.controller);
+        return stream.toReadableStream();
+    }
+}
+function finalizeChatCompletion(snapshot, params) {
+    const { id, choices, created, model, system_fingerprint, ...rest } = snapshot;
+    const completion = {
+        ...rest,
+        id,
+        choices: choices.map(({ message, finish_reason, index, logprobs, ...choiceRest }) => {
+            if (!finish_reason) {
+                throw new OpenAIError(`missing finish_reason for choice ${index}`);
+            }
+            const { content = null, function_call, tool_calls, ...messageRest } = message;
+            const role = message.role; // this is what we expect; in theory it could be different which would make our types a slight lie but would be fine.
+            if (!role) {
+                throw new OpenAIError(`missing role for choice ${index}`);
+            }
+            if (function_call) {
+                const { arguments: args, name } = function_call;
+                if (args == null) {
+                    throw new OpenAIError(`missing function_call.arguments for choice ${index}`);
+                }
+                if (!name) {
+                    throw new OpenAIError(`missing function_call.name for choice ${index}`);
+                }
+                return {
+                    ...choiceRest,
+                    message: {
+                        content,
+                        function_call: { arguments: args, name },
+                        role,
+                        refusal: message.refusal ?? null,
+                    },
+                    finish_reason,
+                    index,
+                    logprobs,
+                };
+            }
+            if (tool_calls) {
+                return {
+                    ...choiceRest,
+                    index,
+                    finish_reason,
+                    logprobs,
+                    message: {
+                        ...messageRest,
+                        role,
+                        content,
+                        refusal: message.refusal ?? null,
+                        tool_calls: tool_calls.map((tool_call, i) => {
+                            const { function: fn, type, id, ...toolRest } = tool_call;
+                            const { arguments: args, name, ...fnRest } = fn || {};
+                            if (id == null) {
+                                throw new OpenAIError(`missing choices[${index}].tool_calls[${i}].id\n${str(snapshot)}`);
+                            }
+                            if (type == null) {
+                                throw new OpenAIError(`missing choices[${index}].tool_calls[${i}].type\n${str(snapshot)}`);
+                            }
+                            if (name == null) {
+                                throw new OpenAIError(`missing choices[${index}].tool_calls[${i}].function.name\n${str(snapshot)}`);
+                            }
+                            if (args == null) {
+                                throw new OpenAIError(`missing choices[${index}].tool_calls[${i}].function.arguments\n${str(snapshot)}`);
+                            }
+                            return { ...toolRest, id, type, function: { ...fnRest, name, arguments: args } };
+                        }),
+                    },
+                };
+            }
+            return {
+                ...choiceRest,
+                message: { ...messageRest, content, role, refusal: message.refusal ?? null },
+                finish_reason,
+                index,
+                logprobs,
+            };
+        }),
+        created,
+        model,
+        object: 'chat.completion',
+        ...(system_fingerprint ? { system_fingerprint } : {}),
+    };
+    return maybeParseChatCompletion(completion, params);
+}
+function str(x) {
+    return JSON.stringify(x);
+}
+function assertNever(_x) { }
+
+class ChatCompletionStreamingRunner extends ChatCompletionStream {
+    static fromReadableStream(stream) {
+        const runner = new ChatCompletionStreamingRunner(null);
+        runner._run(() => runner._fromReadableStream(stream));
+        return runner;
+    }
+    /** @deprecated - please use `runTools` instead. */
+    static runFunctions(client, params, options) {
+        const runner = new ChatCompletionStreamingRunner(null);
+        const opts = {
+            ...options,
+            headers: { ...options?.headers, 'X-Stainless-Helper-Method': 'runFunctions' },
+        };
+        runner._run(() => runner._runFunctions(client, params, opts));
+        return runner;
+    }
+    static runTools(client, params, options) {
+        const runner = new ChatCompletionStreamingRunner(
+        // @ts-expect-error TODO these types are incompatible
+        params);
+        const opts = {
+            ...options,
+            headers: { ...options?.headers, 'X-Stainless-Helper-Method': 'runTools' },
+        };
+        runner._run(() => runner._runTools(client, params, opts));
+        return runner;
+    }
+}
+
+// File generated from our OpenAPI spec by Stainless. See CONTRIBUTING.md for details.
+let Completions$1 = class Completions extends APIResource {
+    parse(body, options) {
+        validateInputTools(body.tools);
+        return this._client.chat.completions
+            .create(body, {
+            ...options,
+            headers: {
+                ...options?.headers,
+                'X-Stainless-Helper-Method': 'beta.chat.completions.parse',
+            },
+        })
+            ._thenUnwrap((completion) => parseChatCompletion(completion, body));
+    }
+    runFunctions(body, options) {
+        if (body.stream) {
+            return ChatCompletionStreamingRunner.runFunctions(this._client, body, options);
+        }
+        return ChatCompletionRunner.runFunctions(this._client, body, options);
+    }
+    runTools(body, options) {
+        if (body.stream) {
+            return ChatCompletionStreamingRunner.runTools(this._client, body, options);
+        }
+        return ChatCompletionRunner.runTools(this._client, body, options);
+    }
+    /**
+     * Creates a chat completion stream
+     */
+    stream(body, options) {
+        return ChatCompletionStream.createChatCompletion(this._client, body, options);
+    }
+};
+
+// File generated from our OpenAPI spec by Stainless. See CONTRIBUTING.md for details.
+let Chat$1 = class Chat extends APIResource {
+    constructor() {
+        super(...arguments);
+        this.completions = new Completions$1(this._client);
+    }
+};
+(function (Chat) {
+    Chat.Completions = Completions$1;
+})(Chat$1);
+
+// File generated from our OpenAPI spec by Stainless. See CONTRIBUTING.md for details.
+class Sessions extends APIResource {
+    /**
+     * Create an ephemeral API token for use in client-side applications with the
+     * Realtime API. Can be configured with the same session parameters as the
+     * `session.update` client event.
+     *
+     * It responds with a session object, plus a `client_secret` key which contains a
+     * usable ephemeral API token that can be used to authenticate browser clients for
+     * the Realtime API.
+     */
+    create(body, options) {
+        return this._client.post('/realtime/sessions', {
+            body,
+            ...options,
+            headers: { 'OpenAI-Beta': 'assistants=v2', ...options?.headers },
+        });
+    }
+}
+
+// File generated from our OpenAPI spec by Stainless. See CONTRIBUTING.md for details.
+class Realtime extends APIResource {
+    constructor() {
+        super(...arguments);
+        this.sessions = new Sessions(this._client);
+    }
+}
+Realtime.Sessions = Sessions;
+
+var __classPrivateFieldGet = (undefined && undefined.__classPrivateFieldGet) || function (receiver, state, kind, f) {
+    if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a getter");
+    if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot read private member from an object whose class did not declare it");
+    return kind === "m" ? f : kind === "a" ? f.call(receiver) : f ? f.value : state.get(receiver);
+};
+var __classPrivateFieldSet = (undefined && undefined.__classPrivateFieldSet) || function (receiver, state, value, kind, f) {
+    if (kind === "m") throw new TypeError("Private method is not writable");
+    if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a setter");
+    if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot write private member to an object whose class did not declare it");
+    return (kind === "a" ? f.call(receiver, value) : f ? f.value = value : state.set(receiver, value)), value;
+};
+var _AssistantStream_instances, _AssistantStream_events, _AssistantStream_runStepSnapshots, _AssistantStream_messageSnapshots, _AssistantStream_messageSnapshot, _AssistantStream_finalRun, _AssistantStream_currentContentIndex, _AssistantStream_currentContent, _AssistantStream_currentToolCallIndex, _AssistantStream_currentToolCall, _AssistantStream_currentEvent, _AssistantStream_currentRunSnapshot, _AssistantStream_currentRunStepSnapshot, _AssistantStream_addEvent, _AssistantStream_endRequest, _AssistantStream_handleMessage, _AssistantStream_handleRunStep, _AssistantStream_handleEvent, _AssistantStream_accumulateRunStep, _AssistantStream_accumulateMessage, _AssistantStream_accumulateContent, _AssistantStream_handleRun;
+class AssistantStream extends EventStream {
+    constructor() {
+        super(...arguments);
+        _AssistantStream_instances.add(this);
+        //Track all events in a single list for reference
+        _AssistantStream_events.set(this, []);
+        //Used to accumulate deltas
+        //We are accumulating many types so the value here is not strict
+        _AssistantStream_runStepSnapshots.set(this, {});
+        _AssistantStream_messageSnapshots.set(this, {});
+        _AssistantStream_messageSnapshot.set(this, undefined);
+        _AssistantStream_finalRun.set(this, undefined);
+        _AssistantStream_currentContentIndex.set(this, undefined);
+        _AssistantStream_currentContent.set(this, undefined);
+        _AssistantStream_currentToolCallIndex.set(this, undefined);
+        _AssistantStream_currentToolCall.set(this, undefined);
+        //For current snapshot methods
+        _AssistantStream_currentEvent.set(this, undefined);
+        _AssistantStream_currentRunSnapshot.set(this, undefined);
+        _AssistantStream_currentRunStepSnapshot.set(this, undefined);
+    }
+    [(_AssistantStream_events = new WeakMap(), _AssistantStream_runStepSnapshots = new WeakMap(), _AssistantStream_messageSnapshots = new WeakMap(), _AssistantStream_messageSnapshot = new WeakMap(), _AssistantStream_finalRun = new WeakMap(), _AssistantStream_currentContentIndex = new WeakMap(), _AssistantStream_currentContent = new WeakMap(), _AssistantStream_currentToolCallIndex = new WeakMap(), _AssistantStream_currentToolCall = new WeakMap(), _AssistantStream_currentEvent = new WeakMap(), _AssistantStream_currentRunSnapshot = new WeakMap(), _AssistantStream_currentRunStepSnapshot = new WeakMap(), _AssistantStream_instances = new WeakSet(), Symbol.asyncIterator)]() {
+        const pushQueue = [];
+        const readQueue = [];
+        let done = false;
+        //Catch all for passing along all events
+        this.on('event', (event) => {
+            const reader = readQueue.shift();
+            if (reader) {
+                reader.resolve(event);
+            }
+            else {
+                pushQueue.push(event);
+            }
+        });
+        this.on('end', () => {
+            done = true;
+            for (const reader of readQueue) {
+                reader.resolve(undefined);
+            }
+            readQueue.length = 0;
+        });
+        this.on('abort', (err) => {
+            done = true;
+            for (const reader of readQueue) {
+                reader.reject(err);
+            }
+            readQueue.length = 0;
+        });
+        this.on('error', (err) => {
+            done = true;
+            for (const reader of readQueue) {
+                reader.reject(err);
+            }
+            readQueue.length = 0;
+        });
+        return {
+            next: async () => {
+                if (!pushQueue.length) {
+                    if (done) {
+                        return { value: undefined, done: true };
+                    }
+                    return new Promise((resolve, reject) => readQueue.push({ resolve, reject })).then((chunk) => (chunk ? { value: chunk, done: false } : { value: undefined, done: true }));
+                }
+                const chunk = pushQueue.shift();
+                return { value: chunk, done: false };
+            },
+            return: async () => {
+                this.abort();
+                return { value: undefined, done: true };
+            },
+        };
+    }
+    static fromReadableStream(stream) {
+        const runner = new AssistantStream();
+        runner._run(() => runner._fromReadableStream(stream));
+        return runner;
+    }
+    async _fromReadableStream(readableStream, options) {
+        const signal = options?.signal;
+        if (signal) {
+            if (signal.aborted)
+                this.controller.abort();
+            signal.addEventListener('abort', () => this.controller.abort());
+        }
+        this._connected();
+        const stream = Stream.fromReadableStream(readableStream, this.controller);
+        for await (const event of stream) {
+            __classPrivateFieldGet(this, _AssistantStream_instances, "m", _AssistantStream_addEvent).call(this, event);
+        }
+        if (stream.controller.signal?.aborted) {
+            throw new APIUserAbortError();
+        }
+        return this._addRun(__classPrivateFieldGet(this, _AssistantStream_instances, "m", _AssistantStream_endRequest).call(this));
+    }
+    toReadableStream() {
+        const stream = new Stream(this[Symbol.asyncIterator].bind(this), this.controller);
+        return stream.toReadableStream();
+    }
+    static createToolAssistantStream(threadId, runId, runs, params, options) {
+        const runner = new AssistantStream();
+        runner._run(() => runner._runToolAssistantStream(threadId, runId, runs, params, {
+            ...options,
+            headers: { ...options?.headers, 'X-Stainless-Helper-Method': 'stream' },
+        }));
+        return runner;
+    }
+    async _createToolAssistantStream(run, threadId, runId, params, options) {
+        const signal = options?.signal;
+        if (signal) {
+            if (signal.aborted)
+                this.controller.abort();
+            signal.addEventListener('abort', () => this.controller.abort());
+        }
+        const body = { ...params, stream: true };
+        const stream = await run.submitToolOutputs(threadId, runId, body, {
+            ...options,
+            signal: this.controller.signal,
+        });
+        this._connected();
+        for await (const event of stream) {
+            __classPrivateFieldGet(this, _AssistantStream_instances, "m", _AssistantStream_addEvent).call(this, event);
+        }
+        if (stream.controller.signal?.aborted) {
+            throw new APIUserAbortError();
+        }
+        return this._addRun(__classPrivateFieldGet(this, _AssistantStream_instances, "m", _AssistantStream_endRequest).call(this));
+    }
+    static createThreadAssistantStream(params, thread, options) {
+        const runner = new AssistantStream();
+        runner._run(() => runner._threadAssistantStream(params, thread, {
+            ...options,
+            headers: { ...options?.headers, 'X-Stainless-Helper-Method': 'stream' },
+        }));
+        return runner;
+    }
+    static createAssistantStream(threadId, runs, params, options) {
+        const runner = new AssistantStream();
+        runner._run(() => runner._runAssistantStream(threadId, runs, params, {
+            ...options,
+            headers: { ...options?.headers, 'X-Stainless-Helper-Method': 'stream' },
+        }));
+        return runner;
+    }
+    currentEvent() {
+        return __classPrivateFieldGet(this, _AssistantStream_currentEvent, "f");
+    }
+    currentRun() {
+        return __classPrivateFieldGet(this, _AssistantStream_currentRunSnapshot, "f");
+    }
+    currentMessageSnapshot() {
+        return __classPrivateFieldGet(this, _AssistantStream_messageSnapshot, "f");
+    }
+    currentRunStepSnapshot() {
+        return __classPrivateFieldGet(this, _AssistantStream_currentRunStepSnapshot, "f");
+    }
+    async finalRunSteps() {
+        await this.done();
+        return Object.values(__classPrivateFieldGet(this, _AssistantStream_runStepSnapshots, "f"));
+    }
+    async finalMessages() {
+        await this.done();
+        return Object.values(__classPrivateFieldGet(this, _AssistantStream_messageSnapshots, "f"));
+    }
+    async finalRun() {
+        await this.done();
+        if (!__classPrivateFieldGet(this, _AssistantStream_finalRun, "f"))
+            throw Error('Final run was not received.');
+        return __classPrivateFieldGet(this, _AssistantStream_finalRun, "f");
+    }
+    async _createThreadAssistantStream(thread, params, options) {
+        const signal = options?.signal;
+        if (signal) {
+            if (signal.aborted)
+                this.controller.abort();
+            signal.addEventListener('abort', () => this.controller.abort());
+        }
+        const body = { ...params, stream: true };
+        const stream = await thread.createAndRun(body, { ...options, signal: this.controller.signal });
+        this._connected();
+        for await (const event of stream) {
+            __classPrivateFieldGet(this, _AssistantStream_instances, "m", _AssistantStream_addEvent).call(this, event);
+        }
+        if (stream.controller.signal?.aborted) {
+            throw new APIUserAbortError();
+        }
+        return this._addRun(__classPrivateFieldGet(this, _AssistantStream_instances, "m", _AssistantStream_endRequest).call(this));
+    }
+    async _createAssistantStream(run, threadId, params, options) {
+        const signal = options?.signal;
+        if (signal) {
+            if (signal.aborted)
+                this.controller.abort();
+            signal.addEventListener('abort', () => this.controller.abort());
+        }
+        const body = { ...params, stream: true };
+        const stream = await run.create(threadId, body, { ...options, signal: this.controller.signal });
+        this._connected();
+        for await (const event of stream) {
+            __classPrivateFieldGet(this, _AssistantStream_instances, "m", _AssistantStream_addEvent).call(this, event);
+        }
+        if (stream.controller.signal?.aborted) {
+            throw new APIUserAbortError();
+        }
+        return this._addRun(__classPrivateFieldGet(this, _AssistantStream_instances, "m", _AssistantStream_endRequest).call(this));
+    }
+    static accumulateDelta(acc, delta) {
+        for (const [key, deltaValue] of Object.entries(delta)) {
+            if (!acc.hasOwnProperty(key)) {
+                acc[key] = deltaValue;
+                continue;
+            }
+            let accValue = acc[key];
+            if (accValue === null || accValue === undefined) {
+                acc[key] = deltaValue;
+                continue;
+            }
+            // We don't accumulate these special properties
+            if (key === 'index' || key === 'type') {
+                acc[key] = deltaValue;
+                continue;
+            }
+            // Type-specific accumulation logic
+            if (typeof accValue === 'string' && typeof deltaValue === 'string') {
+                accValue += deltaValue;
+            }
+            else if (typeof accValue === 'number' && typeof deltaValue === 'number') {
+                accValue += deltaValue;
+            }
+            else if (isObj(accValue) && isObj(deltaValue)) {
+                accValue = this.accumulateDelta(accValue, deltaValue);
+            }
+            else if (Array.isArray(accValue) && Array.isArray(deltaValue)) {
+                if (accValue.every((x) => typeof x === 'string' || typeof x === 'number')) {
+                    accValue.push(...deltaValue); // Use spread syntax for efficient addition
+                    continue;
+                }
+                for (const deltaEntry of deltaValue) {
+                    if (!isObj(deltaEntry)) {
+                        throw new Error(`Expected array delta entry to be an object but got: ${deltaEntry}`);
+                    }
+                    const index = deltaEntry['index'];
+                    if (index == null) {
+                        console.error(deltaEntry);
+                        throw new Error('Expected array delta entry to have an `index` property');
+                    }
+                    if (typeof index !== 'number') {
+                        throw new Error(`Expected array delta entry \`index\` property to be a number but got ${index}`);
+                    }
+                    const accEntry = accValue[index];
+                    if (accEntry == null) {
+                        accValue.push(deltaEntry);
+                    }
+                    else {
+                        accValue[index] = this.accumulateDelta(accEntry, deltaEntry);
+                    }
+                }
+                continue;
+            }
+            else {
+                throw Error(`Unhandled record type: ${key}, deltaValue: ${deltaValue}, accValue: ${accValue}`);
+            }
+            acc[key] = accValue;
+        }
+        return acc;
+    }
+    _addRun(run) {
+        return run;
+    }
+    async _threadAssistantStream(params, thread, options) {
+        return await this._createThreadAssistantStream(thread, params, options);
+    }
+    async _runAssistantStream(threadId, runs, params, options) {
+        return await this._createAssistantStream(runs, threadId, params, options);
+    }
+    async _runToolAssistantStream(threadId, runId, runs, params, options) {
+        return await this._createToolAssistantStream(runs, threadId, runId, params, options);
+    }
+}
+_AssistantStream_addEvent = function _AssistantStream_addEvent(event) {
+    if (this.ended)
+        return;
+    __classPrivateFieldSet(this, _AssistantStream_currentEvent, event, "f");
+    __classPrivateFieldGet(this, _AssistantStream_instances, "m", _AssistantStream_handleEvent).call(this, event);
+    switch (event.event) {
+        case 'thread.created':
+            //No action on this event.
+            break;
+        case 'thread.run.created':
+        case 'thread.run.queued':
+        case 'thread.run.in_progress':
+        case 'thread.run.requires_action':
+        case 'thread.run.completed':
+        case 'thread.run.failed':
+        case 'thread.run.cancelling':
+        case 'thread.run.cancelled':
+        case 'thread.run.expired':
+            __classPrivateFieldGet(this, _AssistantStream_instances, "m", _AssistantStream_handleRun).call(this, event);
+            break;
+        case 'thread.run.step.created':
+        case 'thread.run.step.in_progress':
+        case 'thread.run.step.delta':
+        case 'thread.run.step.completed':
+        case 'thread.run.step.failed':
+        case 'thread.run.step.cancelled':
+        case 'thread.run.step.expired':
+            __classPrivateFieldGet(this, _AssistantStream_instances, "m", _AssistantStream_handleRunStep).call(this, event);
+            break;
+        case 'thread.message.created':
+        case 'thread.message.in_progress':
+        case 'thread.message.delta':
+        case 'thread.message.completed':
+        case 'thread.message.incomplete':
+            __classPrivateFieldGet(this, _AssistantStream_instances, "m", _AssistantStream_handleMessage).call(this, event);
+            break;
+        case 'error':
+            //This is included for completeness, but errors are processed in the SSE event processing so this should not occur
+            throw new Error('Encountered an error event in event processing - errors should be processed earlier');
+    }
+}, _AssistantStream_endRequest = function _AssistantStream_endRequest() {
+    if (this.ended) {
+        throw new OpenAIError(`stream has ended, this shouldn't happen`);
+    }
+    if (!__classPrivateFieldGet(this, _AssistantStream_finalRun, "f"))
+        throw Error('Final run has not been received');
+    return __classPrivateFieldGet(this, _AssistantStream_finalRun, "f");
+}, _AssistantStream_handleMessage = function _AssistantStream_handleMessage(event) {
+    const [accumulatedMessage, newContent] = __classPrivateFieldGet(this, _AssistantStream_instances, "m", _AssistantStream_accumulateMessage).call(this, event, __classPrivateFieldGet(this, _AssistantStream_messageSnapshot, "f"));
+    __classPrivateFieldSet(this, _AssistantStream_messageSnapshot, accumulatedMessage, "f");
+    __classPrivateFieldGet(this, _AssistantStream_messageSnapshots, "f")[accumulatedMessage.id] = accumulatedMessage;
+    for (const content of newContent) {
+        const snapshotContent = accumulatedMessage.content[content.index];
+        if (snapshotContent?.type == 'text') {
+            this._emit('textCreated', snapshotContent.text);
+        }
+    }
+    switch (event.event) {
+        case 'thread.message.created':
+            this._emit('messageCreated', event.data);
+            break;
+        case 'thread.message.in_progress':
+            break;
+        case 'thread.message.delta':
+            this._emit('messageDelta', event.data.delta, accumulatedMessage);
+            if (event.data.delta.content) {
+                for (const content of event.data.delta.content) {
+                    //If it is text delta, emit a text delta event
+                    if (content.type == 'text' && content.text) {
+                        let textDelta = content.text;
+                        let snapshot = accumulatedMessage.content[content.index];
+                        if (snapshot && snapshot.type == 'text') {
+                            this._emit('textDelta', textDelta, snapshot.text);
+                        }
+                        else {
+                            throw Error('The snapshot associated with this text delta is not text or missing');
+                        }
+                    }
+                    if (content.index != __classPrivateFieldGet(this, _AssistantStream_currentContentIndex, "f")) {
+                        //See if we have in progress content
+                        if (__classPrivateFieldGet(this, _AssistantStream_currentContent, "f")) {
+                            switch (__classPrivateFieldGet(this, _AssistantStream_currentContent, "f").type) {
+                                case 'text':
+                                    this._emit('textDone', __classPrivateFieldGet(this, _AssistantStream_currentContent, "f").text, __classPrivateFieldGet(this, _AssistantStream_messageSnapshot, "f"));
+                                    break;
+                                case 'image_file':
+                                    this._emit('imageFileDone', __classPrivateFieldGet(this, _AssistantStream_currentContent, "f").image_file, __classPrivateFieldGet(this, _AssistantStream_messageSnapshot, "f"));
+                                    break;
+                            }
+                        }
+                        __classPrivateFieldSet(this, _AssistantStream_currentContentIndex, content.index, "f");
+                    }
+                    __classPrivateFieldSet(this, _AssistantStream_currentContent, accumulatedMessage.content[content.index], "f");
+                }
+            }
+            break;
+        case 'thread.message.completed':
+        case 'thread.message.incomplete':
+            //We emit the latest content we were working on on completion (including incomplete)
+            if (__classPrivateFieldGet(this, _AssistantStream_currentContentIndex, "f") !== undefined) {
+                const currentContent = event.data.content[__classPrivateFieldGet(this, _AssistantStream_currentContentIndex, "f")];
+                if (currentContent) {
+                    switch (currentContent.type) {
+                        case 'image_file':
+                            this._emit('imageFileDone', currentContent.image_file, __classPrivateFieldGet(this, _AssistantStream_messageSnapshot, "f"));
+                            break;
+                        case 'text':
+                            this._emit('textDone', currentContent.text, __classPrivateFieldGet(this, _AssistantStream_messageSnapshot, "f"));
+                            break;
+                    }
+                }
+            }
+            if (__classPrivateFieldGet(this, _AssistantStream_messageSnapshot, "f")) {
+                this._emit('messageDone', event.data);
+            }
+            __classPrivateFieldSet(this, _AssistantStream_messageSnapshot, undefined, "f");
+    }
+}, _AssistantStream_handleRunStep = function _AssistantStream_handleRunStep(event) {
+    const accumulatedRunStep = __classPrivateFieldGet(this, _AssistantStream_instances, "m", _AssistantStream_accumulateRunStep).call(this, event);
+    __classPrivateFieldSet(this, _AssistantStream_currentRunStepSnapshot, accumulatedRunStep, "f");
+    switch (event.event) {
+        case 'thread.run.step.created':
+            this._emit('runStepCreated', event.data);
+            break;
+        case 'thread.run.step.delta':
+            const delta = event.data.delta;
+            if (delta.step_details &&
+                delta.step_details.type == 'tool_calls' &&
+                delta.step_details.tool_calls &&
+                accumulatedRunStep.step_details.type == 'tool_calls') {
+                for (const toolCall of delta.step_details.tool_calls) {
+                    if (toolCall.index == __classPrivateFieldGet(this, _AssistantStream_currentToolCallIndex, "f")) {
+                        this._emit('toolCallDelta', toolCall, accumulatedRunStep.step_details.tool_calls[toolCall.index]);
+                    }
+                    else {
+                        if (__classPrivateFieldGet(this, _AssistantStream_currentToolCall, "f")) {
+                            this._emit('toolCallDone', __classPrivateFieldGet(this, _AssistantStream_currentToolCall, "f"));
+                        }
+                        __classPrivateFieldSet(this, _AssistantStream_currentToolCallIndex, toolCall.index, "f");
+                        __classPrivateFieldSet(this, _AssistantStream_currentToolCall, accumulatedRunStep.step_details.tool_calls[toolCall.index], "f");
+                        if (__classPrivateFieldGet(this, _AssistantStream_currentToolCall, "f"))
+                            this._emit('toolCallCreated', __classPrivateFieldGet(this, _AssistantStream_currentToolCall, "f"));
+                    }
+                }
+            }
+            this._emit('runStepDelta', event.data.delta, accumulatedRunStep);
+            break;
+        case 'thread.run.step.completed':
+        case 'thread.run.step.failed':
+        case 'thread.run.step.cancelled':
+        case 'thread.run.step.expired':
+            __classPrivateFieldSet(this, _AssistantStream_currentRunStepSnapshot, undefined, "f");
+            const details = event.data.step_details;
+            if (details.type == 'tool_calls') {
+                if (__classPrivateFieldGet(this, _AssistantStream_currentToolCall, "f")) {
+                    this._emit('toolCallDone', __classPrivateFieldGet(this, _AssistantStream_currentToolCall, "f"));
+                    __classPrivateFieldSet(this, _AssistantStream_currentToolCall, undefined, "f");
+                }
+            }
+            this._emit('runStepDone', event.data, accumulatedRunStep);
+            break;
+    }
+}, _AssistantStream_handleEvent = function _AssistantStream_handleEvent(event) {
+    __classPrivateFieldGet(this, _AssistantStream_events, "f").push(event);
+    this._emit('event', event);
+}, _AssistantStream_accumulateRunStep = function _AssistantStream_accumulateRunStep(event) {
+    switch (event.event) {
+        case 'thread.run.step.created':
+            __classPrivateFieldGet(this, _AssistantStream_runStepSnapshots, "f")[event.data.id] = event.data;
+            return event.data;
+        case 'thread.run.step.delta':
+            let snapshot = __classPrivateFieldGet(this, _AssistantStream_runStepSnapshots, "f")[event.data.id];
+            if (!snapshot) {
+                throw Error('Received a RunStepDelta before creation of a snapshot');
+            }
+            let data = event.data;
+            if (data.delta) {
+                const accumulated = AssistantStream.accumulateDelta(snapshot, data.delta);
+                __classPrivateFieldGet(this, _AssistantStream_runStepSnapshots, "f")[event.data.id] = accumulated;
+            }
+            return __classPrivateFieldGet(this, _AssistantStream_runStepSnapshots, "f")[event.data.id];
+        case 'thread.run.step.completed':
+        case 'thread.run.step.failed':
+        case 'thread.run.step.cancelled':
+        case 'thread.run.step.expired':
+        case 'thread.run.step.in_progress':
+            __classPrivateFieldGet(this, _AssistantStream_runStepSnapshots, "f")[event.data.id] = event.data;
+            break;
+    }
+    if (__classPrivateFieldGet(this, _AssistantStream_runStepSnapshots, "f")[event.data.id])
+        return __classPrivateFieldGet(this, _AssistantStream_runStepSnapshots, "f")[event.data.id];
+    throw new Error('No snapshot available');
+}, _AssistantStream_accumulateMessage = function _AssistantStream_accumulateMessage(event, snapshot) {
+    let newContent = [];
+    switch (event.event) {
+        case 'thread.message.created':
+            //On creation the snapshot is just the initial message
+            return [event.data, newContent];
+        case 'thread.message.delta':
+            if (!snapshot) {
+                throw Error('Received a delta with no existing snapshot (there should be one from message creation)');
+            }
+            let data = event.data;
+            //If this delta does not have content, nothing to process
+            if (data.delta.content) {
+                for (const contentElement of data.delta.content) {
+                    if (contentElement.index in snapshot.content) {
+                        let currentContent = snapshot.content[contentElement.index];
+                        snapshot.content[contentElement.index] = __classPrivateFieldGet(this, _AssistantStream_instances, "m", _AssistantStream_accumulateContent).call(this, contentElement, currentContent);
+                    }
+                    else {
+                        snapshot.content[contentElement.index] = contentElement;
+                        // This is a new element
+                        newContent.push(contentElement);
+                    }
+                }
+            }
+            return [snapshot, newContent];
+        case 'thread.message.in_progress':
+        case 'thread.message.completed':
+        case 'thread.message.incomplete':
+            //No changes on other thread events
+            if (snapshot) {
+                return [snapshot, newContent];
+            }
+            else {
+                throw Error('Received thread message event with no existing snapshot');
+            }
+    }
+    throw Error('Tried to accumulate a non-message event');
+}, _AssistantStream_accumulateContent = function _AssistantStream_accumulateContent(contentElement, currentContent) {
+    return AssistantStream.accumulateDelta(currentContent, contentElement);
+}, _AssistantStream_handleRun = function _AssistantStream_handleRun(event) {
+    __classPrivateFieldSet(this, _AssistantStream_currentRunSnapshot, event.data, "f");
+    switch (event.event) {
+        case 'thread.run.created':
+            break;
+        case 'thread.run.queued':
+            break;
+        case 'thread.run.in_progress':
+            break;
+        case 'thread.run.requires_action':
+        case 'thread.run.cancelled':
+        case 'thread.run.failed':
+        case 'thread.run.completed':
+        case 'thread.run.expired':
+            __classPrivateFieldSet(this, _AssistantStream_finalRun, event.data, "f");
+            if (__classPrivateFieldGet(this, _AssistantStream_currentToolCall, "f")) {
+                this._emit('toolCallDone', __classPrivateFieldGet(this, _AssistantStream_currentToolCall, "f"));
+                __classPrivateFieldSet(this, _AssistantStream_currentToolCall, undefined, "f");
+            }
+            break;
+    }
+};
+
+// File generated from our OpenAPI spec by Stainless. See CONTRIBUTING.md for details.
+class Messages extends APIResource {
+    /**
+     * Create a message.
+     */
+    create(threadId, body, options) {
+        return this._client.post(`/threads/${threadId}/messages`, {
+            body,
+            ...options,
+            headers: { 'OpenAI-Beta': 'assistants=v2', ...options?.headers },
+        });
+    }
+    /**
+     * Retrieve a message.
+     */
+    retrieve(threadId, messageId, options) {
+        return this._client.get(`/threads/${threadId}/messages/${messageId}`, {
+            ...options,
+            headers: { 'OpenAI-Beta': 'assistants=v2', ...options?.headers },
+        });
+    }
+    /**
+     * Modifies a message.
+     */
+    update(threadId, messageId, body, options) {
+        return this._client.post(`/threads/${threadId}/messages/${messageId}`, {
+            body,
+            ...options,
+            headers: { 'OpenAI-Beta': 'assistants=v2', ...options?.headers },
+        });
+    }
+    list(threadId, query = {}, options) {
+        if (isRequestOptions(query)) {
+            return this.list(threadId, {}, query);
+        }
+        return this._client.getAPIList(`/threads/${threadId}/messages`, MessagesPage, {
+            query,
+            ...options,
+            headers: { 'OpenAI-Beta': 'assistants=v2', ...options?.headers },
+        });
+    }
+    /**
+     * Deletes a message.
+     */
+    del(threadId, messageId, options) {
+        return this._client.delete(`/threads/${threadId}/messages/${messageId}`, {
+            ...options,
+            headers: { 'OpenAI-Beta': 'assistants=v2', ...options?.headers },
+        });
+    }
+}
+class MessagesPage extends CursorPage {
+}
+Messages.MessagesPage = MessagesPage;
+
+// File generated from our OpenAPI spec by Stainless. See CONTRIBUTING.md for details.
+class Steps extends APIResource {
+    retrieve(threadId, runId, stepId, query = {}, options) {
+        if (isRequestOptions(query)) {
+            return this.retrieve(threadId, runId, stepId, {}, query);
+        }
+        return this._client.get(`/threads/${threadId}/runs/${runId}/steps/${stepId}`, {
+            query,
+            ...options,
+            headers: { 'OpenAI-Beta': 'assistants=v2', ...options?.headers },
+        });
+    }
+    list(threadId, runId, query = {}, options) {
+        if (isRequestOptions(query)) {
+            return this.list(threadId, runId, {}, query);
+        }
+        return this._client.getAPIList(`/threads/${threadId}/runs/${runId}/steps`, RunStepsPage, {
+            query,
+            ...options,
+            headers: { 'OpenAI-Beta': 'assistants=v2', ...options?.headers },
+        });
+    }
+}
+class RunStepsPage extends CursorPage {
+}
+Steps.RunStepsPage = RunStepsPage;
+
+// File generated from our OpenAPI spec by Stainless. See CONTRIBUTING.md for details.
+class Runs extends APIResource {
+    constructor() {
+        super(...arguments);
+        this.steps = new Steps(this._client);
+    }
+    create(threadId, params, options) {
+        const { include, ...body } = params;
+        return this._client.post(`/threads/${threadId}/runs`, {
+            query: { include },
+            body,
+            ...options,
+            headers: { 'OpenAI-Beta': 'assistants=v2', ...options?.headers },
+            stream: params.stream ?? false,
+        });
+    }
+    /**
+     * Retrieves a run.
+     */
+    retrieve(threadId, runId, options) {
+        return this._client.get(`/threads/${threadId}/runs/${runId}`, {
+            ...options,
+            headers: { 'OpenAI-Beta': 'assistants=v2', ...options?.headers },
+        });
+    }
+    /**
+     * Modifies a run.
+     */
+    update(threadId, runId, body, options) {
+        return this._client.post(`/threads/${threadId}/runs/${runId}`, {
+            body,
+            ...options,
+            headers: { 'OpenAI-Beta': 'assistants=v2', ...options?.headers },
+        });
+    }
+    list(threadId, query = {}, options) {
+        if (isRequestOptions(query)) {
+            return this.list(threadId, {}, query);
+        }
+        return this._client.getAPIList(`/threads/${threadId}/runs`, RunsPage, {
+            query,
+            ...options,
+            headers: { 'OpenAI-Beta': 'assistants=v2', ...options?.headers },
+        });
+    }
+    /**
+     * Cancels a run that is `in_progress`.
+     */
+    cancel(threadId, runId, options) {
+        return this._client.post(`/threads/${threadId}/runs/${runId}/cancel`, {
+            ...options,
+            headers: { 'OpenAI-Beta': 'assistants=v2', ...options?.headers },
+        });
+    }
+    /**
+     * A helper to create a run an poll for a terminal state. More information on Run
+     * lifecycles can be found here:
+     * https://platform.openai.com/docs/assistants/how-it-works/runs-and-run-steps
+     */
+    async createAndPoll(threadId, body, options) {
+        const run = await this.create(threadId, body, options);
+        return await this.poll(threadId, run.id, options);
+    }
+    /**
+     * Create a Run stream
+     *
+     * @deprecated use `stream` instead
+     */
+    createAndStream(threadId, body, options) {
+        return AssistantStream.createAssistantStream(threadId, this._client.beta.threads.runs, body, options);
+    }
+    /**
+     * A helper to poll a run status until it reaches a terminal state. More
+     * information on Run lifecycles can be found here:
+     * https://platform.openai.com/docs/assistants/how-it-works/runs-and-run-steps
+     */
+    async poll(threadId, runId, options) {
+        const headers = { ...options?.headers, 'X-Stainless-Poll-Helper': 'true' };
+        if (options?.pollIntervalMs) {
+            headers['X-Stainless-Custom-Poll-Interval'] = options.pollIntervalMs.toString();
+        }
+        while (true) {
+            const { data: run, response } = await this.retrieve(threadId, runId, {
+                ...options,
+                headers: { ...options?.headers, ...headers },
+            }).withResponse();
+            switch (run.status) {
+                //If we are in any sort of intermediate state we poll
+                case 'queued':
+                case 'in_progress':
+                case 'cancelling':
+                    let sleepInterval = 5000;
+                    if (options?.pollIntervalMs) {
+                        sleepInterval = options.pollIntervalMs;
+                    }
+                    else {
+                        const headerInterval = response.headers.get('openai-poll-after-ms');
+                        if (headerInterval) {
+                            const headerIntervalMs = parseInt(headerInterval);
+                            if (!isNaN(headerIntervalMs)) {
+                                sleepInterval = headerIntervalMs;
+                            }
+                        }
+                    }
+                    await sleep(sleepInterval);
+                    break;
+                //We return the run in any terminal state.
+                case 'requires_action':
+                case 'incomplete':
+                case 'cancelled':
+                case 'completed':
+                case 'failed':
+                case 'expired':
+                    return run;
+            }
+        }
+    }
+    /**
+     * Create a Run stream
+     */
+    stream(threadId, body, options) {
+        return AssistantStream.createAssistantStream(threadId, this._client.beta.threads.runs, body, options);
+    }
+    submitToolOutputs(threadId, runId, body, options) {
+        return this._client.post(`/threads/${threadId}/runs/${runId}/submit_tool_outputs`, {
+            body,
+            ...options,
+            headers: { 'OpenAI-Beta': 'assistants=v2', ...options?.headers },
+            stream: body.stream ?? false,
+        });
+    }
+    /**
+     * A helper to submit a tool output to a run and poll for a terminal run state.
+     * More information on Run lifecycles can be found here:
+     * https://platform.openai.com/docs/assistants/how-it-works/runs-and-run-steps
+     */
+    async submitToolOutputsAndPoll(threadId, runId, body, options) {
+        const run = await this.submitToolOutputs(threadId, runId, body, options);
+        return await this.poll(threadId, run.id, options);
+    }
+    /**
+     * Submit the tool outputs from a previous run and stream the run to a terminal
+     * state. More information on Run lifecycles can be found here:
+     * https://platform.openai.com/docs/assistants/how-it-works/runs-and-run-steps
+     */
+    submitToolOutputsStream(threadId, runId, body, options) {
+        return AssistantStream.createToolAssistantStream(threadId, runId, this._client.beta.threads.runs, body, options);
+    }
+}
+class RunsPage extends CursorPage {
+}
+Runs.RunsPage = RunsPage;
+Runs.Steps = Steps;
+Runs.RunStepsPage = RunStepsPage;
+
+// File generated from our OpenAPI spec by Stainless. See CONTRIBUTING.md for details.
+class Threads extends APIResource {
+    constructor() {
+        super(...arguments);
+        this.runs = new Runs(this._client);
+        this.messages = new Messages(this._client);
+    }
+    create(body = {}, options) {
+        if (isRequestOptions(body)) {
+            return this.create({}, body);
+        }
+        return this._client.post('/threads', {
+            body,
+            ...options,
+            headers: { 'OpenAI-Beta': 'assistants=v2', ...options?.headers },
+        });
+    }
+    /**
+     * Retrieves a thread.
+     */
+    retrieve(threadId, options) {
+        return this._client.get(`/threads/${threadId}`, {
+            ...options,
+            headers: { 'OpenAI-Beta': 'assistants=v2', ...options?.headers },
+        });
+    }
+    /**
+     * Modifies a thread.
+     */
+    update(threadId, body, options) {
+        return this._client.post(`/threads/${threadId}`, {
+            body,
+            ...options,
+            headers: { 'OpenAI-Beta': 'assistants=v2', ...options?.headers },
+        });
+    }
+    /**
+     * Delete a thread.
+     */
+    del(threadId, options) {
+        return this._client.delete(`/threads/${threadId}`, {
+            ...options,
+            headers: { 'OpenAI-Beta': 'assistants=v2', ...options?.headers },
+        });
+    }
+    createAndRun(body, options) {
+        return this._client.post('/threads/runs', {
+            body,
+            ...options,
+            headers: { 'OpenAI-Beta': 'assistants=v2', ...options?.headers },
+            stream: body.stream ?? false,
+        });
+    }
+    /**
+     * A helper to create a thread, start a run and then poll for a terminal state.
+     * More information on Run lifecycles can be found here:
+     * https://platform.openai.com/docs/assistants/how-it-works/runs-and-run-steps
+     */
+    async createAndRunPoll(body, options) {
+        const run = await this.createAndRun(body, options);
+        return await this.runs.poll(run.thread_id, run.id, options);
+    }
+    /**
+     * Create a thread and stream the run back
+     */
+    createAndRunStream(body, options) {
+        return AssistantStream.createThreadAssistantStream(body, this._client.beta.threads, options);
+    }
+}
+Threads.Runs = Runs;
+Threads.RunsPage = RunsPage;
+Threads.Messages = Messages;
+Threads.MessagesPage = MessagesPage;
+
+/**
+ * Like `Promise.allSettled()` but throws an error if any promises are rejected.
+ */
+const allSettledWithThrow = async (promises) => {
+    const results = await Promise.allSettled(promises);
+    const rejected = results.filter((result) => result.status === 'rejected');
+    if (rejected.length) {
+        for (const result of rejected) {
+            console.error(result.reason);
+        }
+        throw new Error(`${rejected.length} promise(s) failed - see the above errors`);
+    }
+    // Note: TS was complaining about using `.filter().map()` here for some reason
+    const values = [];
+    for (const result of results) {
+        if (result.status === 'fulfilled') {
+            values.push(result.value);
+        }
+    }
+    return values;
+};
+
+// File generated from our OpenAPI spec by Stainless. See CONTRIBUTING.md for details.
+let Files$1 = class Files extends APIResource {
+    /**
+     * Create a vector store file by attaching a
+     * [File](https://platform.openai.com/docs/api-reference/files) to a
+     * [vector store](https://platform.openai.com/docs/api-reference/vector-stores/object).
+     */
+    create(vectorStoreId, body, options) {
+        return this._client.post(`/vector_stores/${vectorStoreId}/files`, {
+            body,
+            ...options,
+            headers: { 'OpenAI-Beta': 'assistants=v2', ...options?.headers },
+        });
+    }
+    /**
+     * Retrieves a vector store file.
+     */
+    retrieve(vectorStoreId, fileId, options) {
+        return this._client.get(`/vector_stores/${vectorStoreId}/files/${fileId}`, {
+            ...options,
+            headers: { 'OpenAI-Beta': 'assistants=v2', ...options?.headers },
+        });
+    }
+    list(vectorStoreId, query = {}, options) {
+        if (isRequestOptions(query)) {
+            return this.list(vectorStoreId, {}, query);
+        }
+        return this._client.getAPIList(`/vector_stores/${vectorStoreId}/files`, VectorStoreFilesPage, {
+            query,
+            ...options,
+            headers: { 'OpenAI-Beta': 'assistants=v2', ...options?.headers },
+        });
+    }
+    /**
+     * Delete a vector store file. This will remove the file from the vector store but
+     * the file itself will not be deleted. To delete the file, use the
+     * [delete file](https://platform.openai.com/docs/api-reference/files/delete)
+     * endpoint.
+     */
+    del(vectorStoreId, fileId, options) {
+        return this._client.delete(`/vector_stores/${vectorStoreId}/files/${fileId}`, {
+            ...options,
+            headers: { 'OpenAI-Beta': 'assistants=v2', ...options?.headers },
+        });
+    }
+    /**
+     * Attach a file to the given vector store and wait for it to be processed.
+     */
+    async createAndPoll(vectorStoreId, body, options) {
+        const file = await this.create(vectorStoreId, body, options);
+        return await this.poll(vectorStoreId, file.id, options);
+    }
+    /**
+     * Wait for the vector store file to finish processing.
+     *
+     * Note: this will return even if the file failed to process, you need to check
+     * file.last_error and file.status to handle these cases
+     */
+    async poll(vectorStoreId, fileId, options) {
+        const headers = { ...options?.headers, 'X-Stainless-Poll-Helper': 'true' };
+        if (options?.pollIntervalMs) {
+            headers['X-Stainless-Custom-Poll-Interval'] = options.pollIntervalMs.toString();
+        }
+        while (true) {
+            const fileResponse = await this.retrieve(vectorStoreId, fileId, {
+                ...options,
+                headers,
+            }).withResponse();
+            const file = fileResponse.data;
+            switch (file.status) {
+                case 'in_progress':
+                    let sleepInterval = 5000;
+                    if (options?.pollIntervalMs) {
+                        sleepInterval = options.pollIntervalMs;
+                    }
+                    else {
+                        const headerInterval = fileResponse.response.headers.get('openai-poll-after-ms');
+                        if (headerInterval) {
+                            const headerIntervalMs = parseInt(headerInterval);
+                            if (!isNaN(headerIntervalMs)) {
+                                sleepInterval = headerIntervalMs;
+                            }
+                        }
+                    }
+                    await sleep(sleepInterval);
+                    break;
+                case 'failed':
+                case 'completed':
+                    return file;
+            }
+        }
+    }
+    /**
+     * Upload a file to the `files` API and then attach it to the given vector store.
+     *
+     * Note the file will be asynchronously processed (you can use the alternative
+     * polling helper method to wait for processing to complete).
+     */
+    async upload(vectorStoreId, file, options) {
+        const fileInfo = await this._client.files.create({ file: file, purpose: 'assistants' }, options);
+        return this.create(vectorStoreId, { file_id: fileInfo.id }, options);
+    }
+    /**
+     * Add a file to a vector store and poll until processing is complete.
+     */
+    async uploadAndPoll(vectorStoreId, file, options) {
+        const fileInfo = await this.upload(vectorStoreId, file, options);
+        return await this.poll(vectorStoreId, fileInfo.id, options);
+    }
+};
+class VectorStoreFilesPage extends CursorPage {
+}
+Files$1.VectorStoreFilesPage = VectorStoreFilesPage;
+
+// File generated from our OpenAPI spec by Stainless. See CONTRIBUTING.md for details.
+class FileBatches extends APIResource {
+    /**
+     * Create a vector store file batch.
+     */
+    create(vectorStoreId, body, options) {
+        return this._client.post(`/vector_stores/${vectorStoreId}/file_batches`, {
+            body,
+            ...options,
+            headers: { 'OpenAI-Beta': 'assistants=v2', ...options?.headers },
+        });
+    }
+    /**
+     * Retrieves a vector store file batch.
+     */
+    retrieve(vectorStoreId, batchId, options) {
+        return this._client.get(`/vector_stores/${vectorStoreId}/file_batches/${batchId}`, {
+            ...options,
+            headers: { 'OpenAI-Beta': 'assistants=v2', ...options?.headers },
+        });
+    }
+    /**
+     * Cancel a vector store file batch. This attempts to cancel the processing of
+     * files in this batch as soon as possible.
+     */
+    cancel(vectorStoreId, batchId, options) {
+        return this._client.post(`/vector_stores/${vectorStoreId}/file_batches/${batchId}/cancel`, {
+            ...options,
+            headers: { 'OpenAI-Beta': 'assistants=v2', ...options?.headers },
+        });
+    }
+    /**
+     * Create a vector store batch and poll until all files have been processed.
+     */
+    async createAndPoll(vectorStoreId, body, options) {
+        const batch = await this.create(vectorStoreId, body);
+        return await this.poll(vectorStoreId, batch.id, options);
+    }
+    listFiles(vectorStoreId, batchId, query = {}, options) {
+        if (isRequestOptions(query)) {
+            return this.listFiles(vectorStoreId, batchId, {}, query);
+        }
+        return this._client.getAPIList(`/vector_stores/${vectorStoreId}/file_batches/${batchId}/files`, VectorStoreFilesPage, { query, ...options, headers: { 'OpenAI-Beta': 'assistants=v2', ...options?.headers } });
+    }
+    /**
+     * Wait for the given file batch to be processed.
+     *
+     * Note: this will return even if one of the files failed to process, you need to
+     * check batch.file_counts.failed_count to handle this case.
+     */
+    async poll(vectorStoreId, batchId, options) {
+        const headers = { ...options?.headers, 'X-Stainless-Poll-Helper': 'true' };
+        if (options?.pollIntervalMs) {
+            headers['X-Stainless-Custom-Poll-Interval'] = options.pollIntervalMs.toString();
+        }
+        while (true) {
+            const { data: batch, response } = await this.retrieve(vectorStoreId, batchId, {
+                ...options,
+                headers,
+            }).withResponse();
+            switch (batch.status) {
+                case 'in_progress':
+                    let sleepInterval = 5000;
+                    if (options?.pollIntervalMs) {
+                        sleepInterval = options.pollIntervalMs;
+                    }
+                    else {
+                        const headerInterval = response.headers.get('openai-poll-after-ms');
+                        if (headerInterval) {
+                            const headerIntervalMs = parseInt(headerInterval);
+                            if (!isNaN(headerIntervalMs)) {
+                                sleepInterval = headerIntervalMs;
+                            }
+                        }
+                    }
+                    await sleep(sleepInterval);
+                    break;
+                case 'failed':
+                case 'cancelled':
+                case 'completed':
+                    return batch;
+            }
+        }
+    }
+    /**
+     * Uploads the given files concurrently and then creates a vector store file batch.
+     *
+     * The concurrency limit is configurable using the `maxConcurrency` parameter.
+     */
+    async uploadAndPoll(vectorStoreId, { files, fileIds = [] }, options) {
+        if (files == null || files.length == 0) {
+            throw new Error(`No \`files\` provided to process. If you've already uploaded files you should use \`.createAndPoll()\` instead`);
+        }
+        const configuredConcurrency = options?.maxConcurrency ?? 5;
+        // We cap the number of workers at the number of files (so we don't start any unnecessary workers)
+        const concurrencyLimit = Math.min(configuredConcurrency, files.length);
+        const client = this._client;
+        const fileIterator = files.values();
+        const allFileIds = [...fileIds];
+        // This code is based on this design. The libraries don't accommodate our environment limits.
+        // https://stackoverflow.com/questions/40639432/what-is-the-best-way-to-limit-concurrency-when-using-es6s-promise-all
+        async function processFiles(iterator) {
+            for (let item of iterator) {
+                const fileObj = await client.files.create({ file: item, purpose: 'assistants' }, options);
+                allFileIds.push(fileObj.id);
+            }
+        }
+        // Start workers to process results
+        const workers = Array(concurrencyLimit).fill(fileIterator).map(processFiles);
+        // Wait for all processing to complete.
+        await allSettledWithThrow(workers);
+        return await this.createAndPoll(vectorStoreId, {
+            file_ids: allFileIds,
+        });
+    }
+}
+
+// File generated from our OpenAPI spec by Stainless. See CONTRIBUTING.md for details.
+class VectorStores extends APIResource {
+    constructor() {
+        super(...arguments);
+        this.files = new Files$1(this._client);
+        this.fileBatches = new FileBatches(this._client);
+    }
+    /**
+     * Create a vector store.
+     */
+    create(body, options) {
+        return this._client.post('/vector_stores', {
+            body,
+            ...options,
+            headers: { 'OpenAI-Beta': 'assistants=v2', ...options?.headers },
+        });
+    }
+    /**
+     * Retrieves a vector store.
+     */
+    retrieve(vectorStoreId, options) {
+        return this._client.get(`/vector_stores/${vectorStoreId}`, {
+            ...options,
+            headers: { 'OpenAI-Beta': 'assistants=v2', ...options?.headers },
+        });
+    }
+    /**
+     * Modifies a vector store.
+     */
+    update(vectorStoreId, body, options) {
+        return this._client.post(`/vector_stores/${vectorStoreId}`, {
+            body,
+            ...options,
+            headers: { 'OpenAI-Beta': 'assistants=v2', ...options?.headers },
+        });
+    }
+    list(query = {}, options) {
+        if (isRequestOptions(query)) {
+            return this.list({}, query);
+        }
+        return this._client.getAPIList('/vector_stores', VectorStoresPage, {
+            query,
+            ...options,
+            headers: { 'OpenAI-Beta': 'assistants=v2', ...options?.headers },
+        });
+    }
+    /**
+     * Delete a vector store.
+     */
+    del(vectorStoreId, options) {
+        return this._client.delete(`/vector_stores/${vectorStoreId}`, {
+            ...options,
+            headers: { 'OpenAI-Beta': 'assistants=v2', ...options?.headers },
+        });
+    }
+}
+class VectorStoresPage extends CursorPage {
+}
+VectorStores.VectorStoresPage = VectorStoresPage;
+VectorStores.Files = Files$1;
+VectorStores.VectorStoreFilesPage = VectorStoreFilesPage;
+VectorStores.FileBatches = FileBatches;
+
+// File generated from our OpenAPI spec by Stainless. See CONTRIBUTING.md for details.
+class Beta extends APIResource {
+    constructor() {
+        super(...arguments);
+        this.realtime = new Realtime(this._client);
+        this.vectorStores = new VectorStores(this._client);
+        this.chat = new Chat$1(this._client);
+        this.assistants = new Assistants(this._client);
+        this.threads = new Threads(this._client);
+    }
+}
+Beta.Realtime = Realtime;
+Beta.VectorStores = VectorStores;
+Beta.VectorStoresPage = VectorStoresPage;
+Beta.Assistants = Assistants;
+Beta.AssistantsPage = AssistantsPage;
+Beta.Threads = Threads;
+
+// File generated from our OpenAPI spec by Stainless. See CONTRIBUTING.md for details.
+class Completions extends APIResource {
+    create(body, options) {
+        return this._client.post('/completions', { body, ...options, stream: body.stream ?? false });
+    }
+}
+
+// File generated from our OpenAPI spec by Stainless. See CONTRIBUTING.md for details.
+class Embeddings extends APIResource {
+    /**
+     * Creates an embedding vector representing the input text.
+     */
+    create(body, options) {
+        return this._client.post('/embeddings', { body, ...options });
+    }
+}
+
+// File generated from our OpenAPI spec by Stainless. See CONTRIBUTING.md for details.
+class Files extends APIResource {
+    /**
+     * Upload a file that can be used across various endpoints. Individual files can be
+     * up to 512 MB, and the size of all files uploaded by one organization can be up
+     * to 100 GB.
+     *
+     * The Assistants API supports files up to 2 million tokens and of specific file
+     * types. See the
+     * [Assistants Tools guide](https://platform.openai.com/docs/assistants/tools) for
+     * details.
+     *
+     * The Fine-tuning API only supports `.jsonl` files. The input also has certain
+     * required formats for fine-tuning
+     * [chat](https://platform.openai.com/docs/api-reference/fine-tuning/chat-input) or
+     * [completions](https://platform.openai.com/docs/api-reference/fine-tuning/completions-input)
+     * models.
+     *
+     * The Batch API only supports `.jsonl` files up to 200 MB in size. The input also
+     * has a specific required
+     * [format](https://platform.openai.com/docs/api-reference/batch/request-input).
+     *
+     * Please [contact us](https://help.openai.com/) if you need to increase these
+     * storage limits.
+     */
+    create(body, options) {
+        return this._client.post('/files', multipartFormRequestOptions({ body, ...options }));
+    }
+    /**
+     * Returns information about a specific file.
+     */
+    retrieve(fileId, options) {
+        return this._client.get(`/files/${fileId}`, options);
+    }
+    list(query = {}, options) {
+        if (isRequestOptions(query)) {
+            return this.list({}, query);
+        }
+        return this._client.getAPIList('/files', FileObjectsPage, { query, ...options });
+    }
+    /**
+     * Delete a file.
+     */
+    del(fileId, options) {
+        return this._client.delete(`/files/${fileId}`, options);
+    }
+    /**
+     * Returns the contents of the specified file.
+     */
+    content(fileId, options) {
+        return this._client.get(`/files/${fileId}/content`, {
+            ...options,
+            headers: { Accept: 'application/binary', ...options?.headers },
+            __binaryResponse: true,
+        });
+    }
+    /**
+     * Returns the contents of the specified file.
+     *
+     * @deprecated The `.content()` method should be used instead
+     */
+    retrieveContent(fileId, options) {
+        return this._client.get(`/files/${fileId}/content`, options);
+    }
+    /**
+     * Waits for the given file to be processed, default timeout is 30 mins.
+     */
+    async waitForProcessing(id, { pollInterval = 5000, maxWait = 30 * 60 * 1000 } = {}) {
+        const TERMINAL_STATES = new Set(['processed', 'error', 'deleted']);
+        const start = Date.now();
+        let file = await this.retrieve(id);
+        while (!file.status || !TERMINAL_STATES.has(file.status)) {
+            await sleep(pollInterval);
+            file = await this.retrieve(id);
+            if (Date.now() - start > maxWait) {
+                throw new APIConnectionTimeoutError({
+                    message: `Giving up on waiting for file ${id} to finish processing after ${maxWait} milliseconds.`,
+                });
+            }
+        }
+        return file;
+    }
+}
+class FileObjectsPage extends CursorPage {
+}
+Files.FileObjectsPage = FileObjectsPage;
+
+// File generated from our OpenAPI spec by Stainless. See CONTRIBUTING.md for details.
+class Checkpoints extends APIResource {
+    list(fineTuningJobId, query = {}, options) {
+        if (isRequestOptions(query)) {
+            return this.list(fineTuningJobId, {}, query);
+        }
+        return this._client.getAPIList(`/fine_tuning/jobs/${fineTuningJobId}/checkpoints`, FineTuningJobCheckpointsPage, { query, ...options });
+    }
+}
+class FineTuningJobCheckpointsPage extends CursorPage {
+}
+Checkpoints.FineTuningJobCheckpointsPage = FineTuningJobCheckpointsPage;
+
+// File generated from our OpenAPI spec by Stainless. See CONTRIBUTING.md for details.
+class Jobs extends APIResource {
+    constructor() {
+        super(...arguments);
+        this.checkpoints = new Checkpoints(this._client);
+    }
+    /**
+     * Creates a fine-tuning job which begins the process of creating a new model from
+     * a given dataset.
+     *
+     * Response includes details of the enqueued job including job status and the name
+     * of the fine-tuned models once complete.
+     *
+     * [Learn more about fine-tuning](https://platform.openai.com/docs/guides/fine-tuning)
+     */
+    create(body, options) {
+        return this._client.post('/fine_tuning/jobs', { body, ...options });
+    }
+    /**
+     * Get info about a fine-tuning job.
+     *
+     * [Learn more about fine-tuning](https://platform.openai.com/docs/guides/fine-tuning)
+     */
+    retrieve(fineTuningJobId, options) {
+        return this._client.get(`/fine_tuning/jobs/${fineTuningJobId}`, options);
+    }
+    list(query = {}, options) {
+        if (isRequestOptions(query)) {
+            return this.list({}, query);
+        }
+        return this._client.getAPIList('/fine_tuning/jobs', FineTuningJobsPage, { query, ...options });
+    }
+    /**
+     * Immediately cancel a fine-tune job.
+     */
+    cancel(fineTuningJobId, options) {
+        return this._client.post(`/fine_tuning/jobs/${fineTuningJobId}/cancel`, options);
+    }
+    listEvents(fineTuningJobId, query = {}, options) {
+        if (isRequestOptions(query)) {
+            return this.listEvents(fineTuningJobId, {}, query);
+        }
+        return this._client.getAPIList(`/fine_tuning/jobs/${fineTuningJobId}/events`, FineTuningJobEventsPage, {
+            query,
+            ...options,
+        });
+    }
+}
+class FineTuningJobsPage extends CursorPage {
+}
+class FineTuningJobEventsPage extends CursorPage {
+}
+Jobs.FineTuningJobsPage = FineTuningJobsPage;
+Jobs.FineTuningJobEventsPage = FineTuningJobEventsPage;
+Jobs.Checkpoints = Checkpoints;
+Jobs.FineTuningJobCheckpointsPage = FineTuningJobCheckpointsPage;
+
+// File generated from our OpenAPI spec by Stainless. See CONTRIBUTING.md for details.
+class FineTuning extends APIResource {
+    constructor() {
+        super(...arguments);
+        this.jobs = new Jobs(this._client);
+    }
+}
+FineTuning.Jobs = Jobs;
+FineTuning.FineTuningJobsPage = FineTuningJobsPage;
+FineTuning.FineTuningJobEventsPage = FineTuningJobEventsPage;
+
+// File generated from our OpenAPI spec by Stainless. See CONTRIBUTING.md for details.
+class Images extends APIResource {
+    /**
+     * Creates a variation of a given image.
+     */
+    createVariation(body, options) {
+        return this._client.post('/images/variations', multipartFormRequestOptions({ body, ...options }));
+    }
+    /**
+     * Creates an edited or extended image given an original image and a prompt.
+     */
+    edit(body, options) {
+        return this._client.post('/images/edits', multipartFormRequestOptions({ body, ...options }));
+    }
+    /**
+     * Creates an image given a prompt.
+     */
+    generate(body, options) {
+        return this._client.post('/images/generations', { body, ...options });
+    }
+}
+
+// File generated from our OpenAPI spec by Stainless. See CONTRIBUTING.md for details.
+class Models extends APIResource {
+    /**
+     * Retrieves a model instance, providing basic information about the model such as
+     * the owner and permissioning.
+     */
+    retrieve(model, options) {
+        return this._client.get(`/models/${model}`, options);
+    }
+    /**
+     * Lists the currently available models, and provides basic information about each
+     * one such as the owner and availability.
+     */
+    list(options) {
+        return this._client.getAPIList('/models', ModelsPage, options);
+    }
+    /**
+     * Delete a fine-tuned model. You must have the Owner role in your organization to
+     * delete a model.
+     */
+    del(model, options) {
+        return this._client.delete(`/models/${model}`, options);
+    }
+}
+/**
+ * Note: no pagination actually occurs yet, this is for forwards-compatibility.
+ */
+class ModelsPage extends Page {
+}
+Models.ModelsPage = ModelsPage;
+
+// File generated from our OpenAPI spec by Stainless. See CONTRIBUTING.md for details.
+class Moderations extends APIResource {
+    /**
+     * Classifies if text and/or image inputs are potentially harmful. Learn more in
+     * the [moderation guide](https://platform.openai.com/docs/guides/moderation).
+     */
+    create(body, options) {
+        return this._client.post('/moderations', { body, ...options });
+    }
+}
+
+// File generated from our OpenAPI spec by Stainless. See CONTRIBUTING.md for details.
+class Parts extends APIResource {
+    /**
+     * Adds a
+     * [Part](https://platform.openai.com/docs/api-reference/uploads/part-object) to an
+     * [Upload](https://platform.openai.com/docs/api-reference/uploads/object) object.
+     * A Part represents a chunk of bytes from the file you are trying to upload.
+     *
+     * Each Part can be at most 64 MB, and you can add Parts until you hit the Upload
+     * maximum of 8 GB.
+     *
+     * It is possible to add multiple Parts in parallel. You can decide the intended
+     * order of the Parts when you
+     * [complete the Upload](https://platform.openai.com/docs/api-reference/uploads/complete).
+     */
+    create(uploadId, body, options) {
+        return this._client.post(`/uploads/${uploadId}/parts`, multipartFormRequestOptions({ body, ...options }));
+    }
+}
+
+// File generated from our OpenAPI spec by Stainless. See CONTRIBUTING.md for details.
+class Uploads extends APIResource {
+    constructor() {
+        super(...arguments);
+        this.parts = new Parts(this._client);
+    }
+    /**
+     * Creates an intermediate
+     * [Upload](https://platform.openai.com/docs/api-reference/uploads/object) object
+     * that you can add
+     * [Parts](https://platform.openai.com/docs/api-reference/uploads/part-object) to.
+     * Currently, an Upload can accept at most 8 GB in total and expires after an hour
+     * after you create it.
+     *
+     * Once you complete the Upload, we will create a
+     * [File](https://platform.openai.com/docs/api-reference/files/object) object that
+     * contains all the parts you uploaded. This File is usable in the rest of our
+     * platform as a regular File object.
+     *
+     * For certain `purpose`s, the correct `mime_type` must be specified. Please refer
+     * to documentation for the supported MIME types for your use case:
+     *
+     * - [Assistants](https://platform.openai.com/docs/assistants/tools/file-search#supported-files)
+     *
+     * For guidance on the proper filename extensions for each purpose, please follow
+     * the documentation on
+     * [creating a File](https://platform.openai.com/docs/api-reference/files/create).
+     */
+    create(body, options) {
+        return this._client.post('/uploads', { body, ...options });
+    }
+    /**
+     * Cancels the Upload. No Parts may be added after an Upload is cancelled.
+     */
+    cancel(uploadId, options) {
+        return this._client.post(`/uploads/${uploadId}/cancel`, options);
+    }
+    /**
+     * Completes the
+     * [Upload](https://platform.openai.com/docs/api-reference/uploads/object).
+     *
+     * Within the returned Upload object, there is a nested
+     * [File](https://platform.openai.com/docs/api-reference/files/object) object that
+     * is ready to use in the rest of the platform.
+     *
+     * You can specify the order of the Parts by passing in an ordered list of the Part
+     * IDs.
+     *
+     * The number of bytes uploaded upon completion must match the number of bytes
+     * initially specified when creating the Upload object. No Parts may be added after
+     * an Upload is completed.
+     */
+    complete(uploadId, body, options) {
+        return this._client.post(`/uploads/${uploadId}/complete`, { body, ...options });
+    }
+}
+Uploads.Parts = Parts;
+
+// File generated from our OpenAPI spec by Stainless. See CONTRIBUTING.md for details.
+var _a;
+/**
+ * API Client for interfacing with the OpenAI API.
+ */
+class OpenAI extends APIClient {
+    /**
+     * API Client for interfacing with the OpenAI API.
+     *
+     * @param {string | undefined} [opts.apiKey=process.env['OPENAI_API_KEY'] ?? undefined]
+     * @param {string | null | undefined} [opts.organization=process.env['OPENAI_ORG_ID'] ?? null]
+     * @param {string | null | undefined} [opts.project=process.env['OPENAI_PROJECT_ID'] ?? null]
+     * @param {string} [opts.baseURL=process.env['OPENAI_BASE_URL'] ?? https://api.openai.com/v1] - Override the default base URL for the API.
+     * @param {number} [opts.timeout=10 minutes] - The maximum amount of time (in milliseconds) the client will wait for a response before timing out.
+     * @param {number} [opts.httpAgent] - An HTTP agent used to manage HTTP(s) connections.
+     * @param {Core.Fetch} [opts.fetch] - Specify a custom `fetch` function implementation.
+     * @param {number} [opts.maxRetries=2] - The maximum number of times the client will retry a request.
+     * @param {Core.Headers} opts.defaultHeaders - Default headers to include with every request to the API.
+     * @param {Core.DefaultQuery} opts.defaultQuery - Default query parameters to include with every request to the API.
+     * @param {boolean} [opts.dangerouslyAllowBrowser=false] - By default, client-side use of this library is not allowed, as it risks exposing your secret API credentials to attackers.
+     */
+    constructor({ baseURL = readEnv('OPENAI_BASE_URL'), apiKey = readEnv('OPENAI_API_KEY'), organization = readEnv('OPENAI_ORG_ID') ?? null, project = readEnv('OPENAI_PROJECT_ID') ?? null, ...opts } = {}) {
+        if (apiKey === undefined) {
+            throw new OpenAIError("The OPENAI_API_KEY environment variable is missing or empty; either provide it, or instantiate the OpenAI client with an apiKey option, like new OpenAI({ apiKey: 'My API Key' }).");
+        }
+        const options = {
+            apiKey,
+            organization,
+            project,
+            ...opts,
+            baseURL: baseURL || `https://api.openai.com/v1`,
+        };
+        if (!options.dangerouslyAllowBrowser && isRunningInBrowser()) {
+            throw new OpenAIError("It looks like you're running in a browser-like environment.\n\nThis is disabled by default, as it risks exposing your secret API credentials to attackers.\nIf you understand the risks and have appropriate mitigations in place,\nyou can set the `dangerouslyAllowBrowser` option to `true`, e.g.,\n\nnew OpenAI({ apiKey, dangerouslyAllowBrowser: true });\n\nhttps://help.openai.com/en/articles/5112595-best-practices-for-api-key-safety\n");
+        }
+        super({
+            baseURL: options.baseURL,
+            timeout: options.timeout ?? 600000 /* 10 minutes */,
+            httpAgent: options.httpAgent,
+            maxRetries: options.maxRetries,
+            fetch: options.fetch,
+        });
+        this.completions = new Completions(this);
+        this.chat = new Chat$2(this);
+        this.embeddings = new Embeddings(this);
+        this.files = new Files(this);
+        this.images = new Images(this);
+        this.audio = new Audio(this);
+        this.moderations = new Moderations(this);
+        this.models = new Models(this);
+        this.fineTuning = new FineTuning(this);
+        this.beta = new Beta(this);
+        this.batches = new Batches(this);
+        this.uploads = new Uploads(this);
+        this._options = options;
+        this.apiKey = apiKey;
+        this.organization = organization;
+        this.project = project;
+    }
+    defaultQuery() {
+        return this._options.defaultQuery;
+    }
+    defaultHeaders(opts) {
+        return {
+            ...super.defaultHeaders(opts),
+            'OpenAI-Organization': this.organization,
+            'OpenAI-Project': this.project,
+            ...this._options.defaultHeaders,
+        };
+    }
+    authHeaders(opts) {
+        return { Authorization: `Bearer ${this.apiKey}` };
+    }
+    stringifyQuery(query) {
+        return stringify(query, { arrayFormat: 'brackets' });
+    }
+}
+_a = OpenAI;
+OpenAI.OpenAI = _a;
+OpenAI.DEFAULT_TIMEOUT = 600000; // 10 minutes
+OpenAI.OpenAIError = OpenAIError;
+OpenAI.APIError = APIError;
+OpenAI.APIConnectionError = APIConnectionError;
+OpenAI.APIConnectionTimeoutError = APIConnectionTimeoutError;
+OpenAI.APIUserAbortError = APIUserAbortError;
+OpenAI.NotFoundError = NotFoundError;
+OpenAI.ConflictError = ConflictError;
+OpenAI.RateLimitError = RateLimitError;
+OpenAI.BadRequestError = BadRequestError;
+OpenAI.AuthenticationError = AuthenticationError;
+OpenAI.InternalServerError = InternalServerError;
+OpenAI.PermissionDeniedError = PermissionDeniedError;
+OpenAI.UnprocessableEntityError = UnprocessableEntityError;
+OpenAI.toFile = toFile;
+OpenAI.fileFromPath = fileFromPath;
+OpenAI.Completions = Completions;
+OpenAI.Chat = Chat$2;
+OpenAI.Embeddings = Embeddings;
+OpenAI.Files = Files;
+OpenAI.FileObjectsPage = FileObjectsPage;
+OpenAI.Images = Images;
+OpenAI.Audio = Audio;
+OpenAI.Moderations = Moderations;
+OpenAI.Models = Models;
+OpenAI.ModelsPage = ModelsPage;
+OpenAI.FineTuning = FineTuning;
+OpenAI.Beta = Beta;
+OpenAI.Batches = Batches;
+OpenAI.BatchesPage = BatchesPage;
+OpenAI.Uploads = Uploads;
+
+class Chat {
+    language;
+    model;
+    temperature;
+    max_tokens;
+    openai;
+    constructor() {
+        this.language = process.env.LANGUAGE || 'Chinese';
+        const supported_languages = ['Chinese', 'English'];
+        if (!supported_languages.includes(this.language)) {
+            failWithOutput(`Language must be one of ${supported_languages}`);
+        }
+        this.model = process.env.MODEL || 'gpt-4o-mini';
+        this.temperature = process.env.TEMPERATURE ? +process.env.TEMPERATURE : 1.0;
+        this.max_tokens = process.env.MAX_TOKENS ? +process.env.MAX_TOKENS : 4096;
+        if (!process.env.OPENAI_API_KEY) {
+            failWithOutput('OPENAI_API_KEY is not set');
+        }
+        this.openai = new OpenAI({
+            apiKey: process.env.OPENAI_API_KEY,
+            baseURL: process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1'
+        });
+    }
+    reviewPatch = async (patch) => {
+        const res = await this.openai.chat.completions.create({
+            messages: [
+                {
+                    role: 'user',
+                    content: createReviewPatchPrompt(this.language, patch)
+                }
+            ],
+            model: this.model,
+            temperature: this.temperature,
+            max_tokens: this.max_tokens
+        });
+        return res.choices?.[0].message.content;
+    };
+}
+const createReviewPatchPrompt = (language, patch) => {
     switch (language) {
         case 'Chinese':
             return `
@@ -40167,78 +40211,2128 @@ ${patch}
     return '';
 };
 
-const failWithOutput = (message) => {
-    console.error(message);
-    coreExports.setFailed(message);
-    throw new Error(message);
-};
-class Chat {
-    language;
-    openai;
-    model;
-    constructor(model) {
-        this.language = process.env.LANGUAGE || 'Chinese';
-        const supported_languages = ['Chinese', 'English'];
-        if (!supported_languages.includes(this.language)) {
-            failWithOutput(`Language must be one of ${supported_languages}`);
-        }
-        if (!process.env.OPENAI_API_KEY) {
-            failWithOutput('OPENAI_API_KEY is not set');
-        }
-        this.openai = new OpenAI({
-            apiKey: process.env.OPENAI_API_KEY,
-            baseURL: process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1'
-        });
-        this.model = model;
-    }
-    reviewPatch = async (patch) => {
-        const res = await this.openai.chat.completions.create({
-            messages: [
-                {
-                    role: 'user',
-                    content: createReviewPrompt(this.language, patch)
-                }
-            ],
-            model: this.model,
-            temperature: process.env.TEMPERATURE ? +process.env.TEMPERATURE : 1.0,
-            max_tokens: process.env.MAX_TOKENS ? +process.env.MAX_TOKENS : 4096
-        });
-        if (res.choices) {
-            return res.choices[0].message.content;
-        }
-        failWithOutput('No response from OpenAI');
-    };
+var balancedMatch;
+var hasRequiredBalancedMatch;
+
+function requireBalancedMatch () {
+	if (hasRequiredBalancedMatch) return balancedMatch;
+	hasRequiredBalancedMatch = 1;
+	balancedMatch = balanced;
+	function balanced(a, b, str) {
+	  if (a instanceof RegExp) a = maybeMatch(a, str);
+	  if (b instanceof RegExp) b = maybeMatch(b, str);
+
+	  var r = range(a, b, str);
+
+	  return r && {
+	    start: r[0],
+	    end: r[1],
+	    pre: str.slice(0, r[0]),
+	    body: str.slice(r[0] + a.length, r[1]),
+	    post: str.slice(r[1] + b.length)
+	  };
+	}
+
+	function maybeMatch(reg, str) {
+	  var m = str.match(reg);
+	  return m ? m[0] : null;
+	}
+
+	balanced.range = range;
+	function range(a, b, str) {
+	  var begs, beg, left, right, result;
+	  var ai = str.indexOf(a);
+	  var bi = str.indexOf(b, ai + 1);
+	  var i = ai;
+
+	  if (ai >= 0 && bi > 0) {
+	    if(a===b) {
+	      return [ai, bi];
+	    }
+	    begs = [];
+	    left = str.length;
+
+	    while (i >= 0 && !result) {
+	      if (i == ai) {
+	        begs.push(i);
+	        ai = str.indexOf(a, i + 1);
+	      } else if (begs.length == 1) {
+	        result = [ begs.pop(), bi ];
+	      } else {
+	        beg = begs.pop();
+	        if (beg < left) {
+	          left = beg;
+	          right = bi;
+	        }
+
+	        bi = str.indexOf(b, i + 1);
+	      }
+
+	      i = ai < bi && ai >= 0 ? ai : bi;
+	    }
+
+	    if (begs.length) {
+	      result = [ left, right ];
+	    }
+	  }
+
+	  return result;
+	}
+	return balancedMatch;
 }
+
+var braceExpansion;
+var hasRequiredBraceExpansion;
+
+function requireBraceExpansion () {
+	if (hasRequiredBraceExpansion) return braceExpansion;
+	hasRequiredBraceExpansion = 1;
+	var balanced = requireBalancedMatch();
+
+	braceExpansion = expandTop;
+
+	var escSlash = '\0SLASH'+Math.random()+'\0';
+	var escOpen = '\0OPEN'+Math.random()+'\0';
+	var escClose = '\0CLOSE'+Math.random()+'\0';
+	var escComma = '\0COMMA'+Math.random()+'\0';
+	var escPeriod = '\0PERIOD'+Math.random()+'\0';
+
+	function numeric(str) {
+	  return parseInt(str, 10) == str
+	    ? parseInt(str, 10)
+	    : str.charCodeAt(0);
+	}
+
+	function escapeBraces(str) {
+	  return str.split('\\\\').join(escSlash)
+	            .split('\\{').join(escOpen)
+	            .split('\\}').join(escClose)
+	            .split('\\,').join(escComma)
+	            .split('\\.').join(escPeriod);
+	}
+
+	function unescapeBraces(str) {
+	  return str.split(escSlash).join('\\')
+	            .split(escOpen).join('{')
+	            .split(escClose).join('}')
+	            .split(escComma).join(',')
+	            .split(escPeriod).join('.');
+	}
+
+
+	// Basically just str.split(","), but handling cases
+	// where we have nested braced sections, which should be
+	// treated as individual members, like {a,{b,c},d}
+	function parseCommaParts(str) {
+	  if (!str)
+	    return [''];
+
+	  var parts = [];
+	  var m = balanced('{', '}', str);
+
+	  if (!m)
+	    return str.split(',');
+
+	  var pre = m.pre;
+	  var body = m.body;
+	  var post = m.post;
+	  var p = pre.split(',');
+
+	  p[p.length-1] += '{' + body + '}';
+	  var postParts = parseCommaParts(post);
+	  if (post.length) {
+	    p[p.length-1] += postParts.shift();
+	    p.push.apply(p, postParts);
+	  }
+
+	  parts.push.apply(parts, p);
+
+	  return parts;
+	}
+
+	function expandTop(str) {
+	  if (!str)
+	    return [];
+
+	  // I don't know why Bash 4.3 does this, but it does.
+	  // Anything starting with {} will have the first two bytes preserved
+	  // but *only* at the top level, so {},a}b will not expand to anything,
+	  // but a{},b}c will be expanded to [a}c,abc].
+	  // One could argue that this is a bug in Bash, but since the goal of
+	  // this module is to match Bash's rules, we escape a leading {}
+	  if (str.substr(0, 2) === '{}') {
+	    str = '\\{\\}' + str.substr(2);
+	  }
+
+	  return expand(escapeBraces(str), true).map(unescapeBraces);
+	}
+
+	function embrace(str) {
+	  return '{' + str + '}';
+	}
+	function isPadded(el) {
+	  return /^-?0\d/.test(el);
+	}
+
+	function lte(i, y) {
+	  return i <= y;
+	}
+	function gte(i, y) {
+	  return i >= y;
+	}
+
+	function expand(str, isTop) {
+	  var expansions = [];
+
+	  var m = balanced('{', '}', str);
+	  if (!m) return [str];
+
+	  // no need to expand pre, since it is guaranteed to be free of brace-sets
+	  var pre = m.pre;
+	  var post = m.post.length
+	    ? expand(m.post, false)
+	    : [''];
+
+	  if (/\$$/.test(m.pre)) {    
+	    for (var k = 0; k < post.length; k++) {
+	      var expansion = pre+ '{' + m.body + '}' + post[k];
+	      expansions.push(expansion);
+	    }
+	  } else {
+	    var isNumericSequence = /^-?\d+\.\.-?\d+(?:\.\.-?\d+)?$/.test(m.body);
+	    var isAlphaSequence = /^[a-zA-Z]\.\.[a-zA-Z](?:\.\.-?\d+)?$/.test(m.body);
+	    var isSequence = isNumericSequence || isAlphaSequence;
+	    var isOptions = m.body.indexOf(',') >= 0;
+	    if (!isSequence && !isOptions) {
+	      // {a},b}
+	      if (m.post.match(/,.*\}/)) {
+	        str = m.pre + '{' + m.body + escClose + m.post;
+	        return expand(str);
+	      }
+	      return [str];
+	    }
+
+	    var n;
+	    if (isSequence) {
+	      n = m.body.split(/\.\./);
+	    } else {
+	      n = parseCommaParts(m.body);
+	      if (n.length === 1) {
+	        // x{{a,b}}y ==> x{a}y x{b}y
+	        n = expand(n[0], false).map(embrace);
+	        if (n.length === 1) {
+	          return post.map(function(p) {
+	            return m.pre + n[0] + p;
+	          });
+	        }
+	      }
+	    }
+
+	    // at this point, n is the parts, and we know it's not a comma set
+	    // with a single entry.
+	    var N;
+
+	    if (isSequence) {
+	      var x = numeric(n[0]);
+	      var y = numeric(n[1]);
+	      var width = Math.max(n[0].length, n[1].length);
+	      var incr = n.length == 3
+	        ? Math.abs(numeric(n[2]))
+	        : 1;
+	      var test = lte;
+	      var reverse = y < x;
+	      if (reverse) {
+	        incr *= -1;
+	        test = gte;
+	      }
+	      var pad = n.some(isPadded);
+
+	      N = [];
+
+	      for (var i = x; test(i, y); i += incr) {
+	        var c;
+	        if (isAlphaSequence) {
+	          c = String.fromCharCode(i);
+	          if (c === '\\')
+	            c = '';
+	        } else {
+	          c = String(i);
+	          if (pad) {
+	            var need = width - c.length;
+	            if (need > 0) {
+	              var z = new Array(need + 1).join('0');
+	              if (i < 0)
+	                c = '-' + z + c.slice(1);
+	              else
+	                c = z + c;
+	            }
+	          }
+	        }
+	        N.push(c);
+	      }
+	    } else {
+	      N = [];
+
+	      for (var j = 0; j < n.length; j++) {
+	        N.push.apply(N, expand(n[j], false));
+	      }
+	    }
+
+	    for (var j = 0; j < N.length; j++) {
+	      for (var k = 0; k < post.length; k++) {
+	        var expansion = pre + N[j] + post[k];
+	        if (!isTop || isSequence || expansion)
+	          expansions.push(expansion);
+	      }
+	    }
+	  }
+
+	  return expansions;
+	}
+	return braceExpansion;
+}
+
+var braceExpansionExports = requireBraceExpansion();
+var expand = /*@__PURE__*/getDefaultExportFromCjs(braceExpansionExports);
+
+const MAX_PATTERN_LENGTH = 1024 * 64;
+const assertValidPattern = (pattern) => {
+    if (typeof pattern !== 'string') {
+        throw new TypeError('invalid pattern');
+    }
+    if (pattern.length > MAX_PATTERN_LENGTH) {
+        throw new TypeError('pattern is too long');
+    }
+};
+
+// translate the various posix character classes into unicode properties
+// this works across all unicode locales
+// { <posix class>: [<translation>, /u flag required, negated]
+const posixClasses = {
+    '[:alnum:]': ['\\p{L}\\p{Nl}\\p{Nd}', true],
+    '[:alpha:]': ['\\p{L}\\p{Nl}', true],
+    '[:ascii:]': ['\\x' + '00-\\x' + '7f', false],
+    '[:blank:]': ['\\p{Zs}\\t', true],
+    '[:cntrl:]': ['\\p{Cc}', true],
+    '[:digit:]': ['\\p{Nd}', true],
+    '[:graph:]': ['\\p{Z}\\p{C}', true, true],
+    '[:lower:]': ['\\p{Ll}', true],
+    '[:print:]': ['\\p{C}', true],
+    '[:punct:]': ['\\p{P}', true],
+    '[:space:]': ['\\p{Z}\\t\\r\\n\\v\\f', true],
+    '[:upper:]': ['\\p{Lu}', true],
+    '[:word:]': ['\\p{L}\\p{Nl}\\p{Nd}\\p{Pc}', true],
+    '[:xdigit:]': ['A-Fa-f0-9', false],
+};
+// only need to escape a few things inside of brace expressions
+// escapes: [ \ ] -
+const braceEscape = (s) => s.replace(/[[\]\\-]/g, '\\$&');
+// escape all regexp magic characters
+const regexpEscape = (s) => s.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, '\\$&');
+// everything has already been escaped, we just have to join
+const rangesToString = (ranges) => ranges.join('');
+// takes a glob string at a posix brace expression, and returns
+// an equivalent regular expression source, and boolean indicating
+// whether the /u flag needs to be applied, and the number of chars
+// consumed to parse the character class.
+// This also removes out of order ranges, and returns ($.) if the
+// entire class just no good.
+const parseClass = (glob, position) => {
+    const pos = position;
+    /* c8 ignore start */
+    if (glob.charAt(pos) !== '[') {
+        throw new Error('not in a brace expression');
+    }
+    /* c8 ignore stop */
+    const ranges = [];
+    const negs = [];
+    let i = pos + 1;
+    let sawStart = false;
+    let uflag = false;
+    let escaping = false;
+    let negate = false;
+    let endPos = pos;
+    let rangeStart = '';
+    WHILE: while (i < glob.length) {
+        const c = glob.charAt(i);
+        if ((c === '!' || c === '^') && i === pos + 1) {
+            negate = true;
+            i++;
+            continue;
+        }
+        if (c === ']' && sawStart && !escaping) {
+            endPos = i + 1;
+            break;
+        }
+        sawStart = true;
+        if (c === '\\') {
+            if (!escaping) {
+                escaping = true;
+                i++;
+                continue;
+            }
+            // escaped \ char, fall through and treat like normal char
+        }
+        if (c === '[' && !escaping) {
+            // either a posix class, a collation equivalent, or just a [
+            for (const [cls, [unip, u, neg]] of Object.entries(posixClasses)) {
+                if (glob.startsWith(cls, i)) {
+                    // invalid, [a-[] is fine, but not [a-[:alpha]]
+                    if (rangeStart) {
+                        return ['$.', false, glob.length - pos, true];
+                    }
+                    i += cls.length;
+                    if (neg)
+                        negs.push(unip);
+                    else
+                        ranges.push(unip);
+                    uflag = uflag || u;
+                    continue WHILE;
+                }
+            }
+        }
+        // now it's just a normal character, effectively
+        escaping = false;
+        if (rangeStart) {
+            // throw this range away if it's not valid, but others
+            // can still match.
+            if (c > rangeStart) {
+                ranges.push(braceEscape(rangeStart) + '-' + braceEscape(c));
+            }
+            else if (c === rangeStart) {
+                ranges.push(braceEscape(c));
+            }
+            rangeStart = '';
+            i++;
+            continue;
+        }
+        // now might be the start of a range.
+        // can be either c-d or c-] or c<more...>] or c] at this point
+        if (glob.startsWith('-]', i + 1)) {
+            ranges.push(braceEscape(c + '-'));
+            i += 2;
+            continue;
+        }
+        if (glob.startsWith('-', i + 1)) {
+            rangeStart = c;
+            i += 2;
+            continue;
+        }
+        // not the start of a range, just a single character
+        ranges.push(braceEscape(c));
+        i++;
+    }
+    if (endPos < i) {
+        // didn't see the end of the class, not a valid class,
+        // but might still be valid as a literal match.
+        return ['', false, 0, false];
+    }
+    // if we got no ranges and no negates, then we have a range that
+    // cannot possibly match anything, and that poisons the whole glob
+    if (!ranges.length && !negs.length) {
+        return ['$.', false, glob.length - pos, true];
+    }
+    // if we got one positive range, and it's a single character, then that's
+    // not actually a magic pattern, it's just that one literal character.
+    // we should not treat that as "magic", we should just return the literal
+    // character. [_] is a perfectly valid way to escape glob magic chars.
+    if (negs.length === 0 &&
+        ranges.length === 1 &&
+        /^\\?.$/.test(ranges[0]) &&
+        !negate) {
+        const r = ranges[0].length === 2 ? ranges[0].slice(-1) : ranges[0];
+        return [regexpEscape(r), false, endPos - pos, false];
+    }
+    const sranges = '[' + (negate ? '^' : '') + rangesToString(ranges) + ']';
+    const snegs = '[' + (negate ? '' : '^') + rangesToString(negs) + ']';
+    const comb = ranges.length && negs.length
+        ? '(' + sranges + '|' + snegs + ')'
+        : ranges.length
+            ? sranges
+            : snegs;
+    return [comb, uflag, endPos - pos, true];
+};
+
+/**
+ * Un-escape a string that has been escaped with {@link escape}.
+ *
+ * If the {@link windowsPathsNoEscape} option is used, then square-brace
+ * escapes are removed, but not backslash escapes.  For example, it will turn
+ * the string `'[*]'` into `*`, but it will not turn `'\\*'` into `'*'`,
+ * becuase `\` is a path separator in `windowsPathsNoEscape` mode.
+ *
+ * When `windowsPathsNoEscape` is not set, then both brace escapes and
+ * backslash escapes are removed.
+ *
+ * Slashes (and backslashes in `windowsPathsNoEscape` mode) cannot be escaped
+ * or unescaped.
+ */
+const unescape = (s, { windowsPathsNoEscape = false, } = {}) => {
+    return windowsPathsNoEscape
+        ? s.replace(/\[([^\/\\])\]/g, '$1')
+        : s.replace(/((?!\\).|^)\[([^\/\\])\]/g, '$1$2').replace(/\\([^\/])/g, '$1');
+};
+
+// parse a single path portion
+const types = new Set(['!', '?', '+', '*', '@']);
+const isExtglobType = (c) => types.has(c);
+// Patterns that get prepended to bind to the start of either the
+// entire string, or just a single path portion, to prevent dots
+// and/or traversal patterns, when needed.
+// Exts don't need the ^ or / bit, because the root binds that already.
+const startNoTraversal = '(?!(?:^|/)\\.\\.?(?:$|/))';
+const startNoDot = '(?!\\.)';
+// characters that indicate a start of pattern needs the "no dots" bit,
+// because a dot *might* be matched. ( is not in the list, because in
+// the case of a child extglob, it will handle the prevention itself.
+const addPatternStart = new Set(['[', '.']);
+// cases where traversal is A-OK, no dot prevention needed
+const justDots = new Set(['..', '.']);
+const reSpecials = new Set('().*{}+?[]^$\\!');
+const regExpEscape$1 = (s) => s.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, '\\$&');
+// any single thing other than /
+const qmark$1 = '[^/]';
+// * => any number of characters
+const star$1 = qmark$1 + '*?';
+// use + when we need to ensure that *something* matches, because the * is
+// the only thing in the path portion.
+const starNoEmpty = qmark$1 + '+?';
+// remove the \ chars that we added if we end up doing a nonmagic compare
+// const deslash = (s: string) => s.replace(/\\(.)/g, '$1')
+class AST {
+    type;
+    #root;
+    #hasMagic;
+    #uflag = false;
+    #parts = [];
+    #parent;
+    #parentIndex;
+    #negs;
+    #filledNegs = false;
+    #options;
+    #toString;
+    // set to true if it's an extglob with no children
+    // (which really means one child of '')
+    #emptyExt = false;
+    constructor(type, parent, options = {}) {
+        this.type = type;
+        // extglobs are inherently magical
+        if (type)
+            this.#hasMagic = true;
+        this.#parent = parent;
+        this.#root = this.#parent ? this.#parent.#root : this;
+        this.#options = this.#root === this ? options : this.#root.#options;
+        this.#negs = this.#root === this ? [] : this.#root.#negs;
+        if (type === '!' && !this.#root.#filledNegs)
+            this.#negs.push(this);
+        this.#parentIndex = this.#parent ? this.#parent.#parts.length : 0;
+    }
+    get hasMagic() {
+        /* c8 ignore start */
+        if (this.#hasMagic !== undefined)
+            return this.#hasMagic;
+        /* c8 ignore stop */
+        for (const p of this.#parts) {
+            if (typeof p === 'string')
+                continue;
+            if (p.type || p.hasMagic)
+                return (this.#hasMagic = true);
+        }
+        // note: will be undefined until we generate the regexp src and find out
+        return this.#hasMagic;
+    }
+    // reconstructs the pattern
+    toString() {
+        if (this.#toString !== undefined)
+            return this.#toString;
+        if (!this.type) {
+            return (this.#toString = this.#parts.map(p => String(p)).join(''));
+        }
+        else {
+            return (this.#toString =
+                this.type + '(' + this.#parts.map(p => String(p)).join('|') + ')');
+        }
+    }
+    #fillNegs() {
+        /* c8 ignore start */
+        if (this !== this.#root)
+            throw new Error('should only call on root');
+        if (this.#filledNegs)
+            return this;
+        /* c8 ignore stop */
+        // call toString() once to fill this out
+        this.toString();
+        this.#filledNegs = true;
+        let n;
+        while ((n = this.#negs.pop())) {
+            if (n.type !== '!')
+                continue;
+            // walk up the tree, appending everthing that comes AFTER parentIndex
+            let p = n;
+            let pp = p.#parent;
+            while (pp) {
+                for (let i = p.#parentIndex + 1; !pp.type && i < pp.#parts.length; i++) {
+                    for (const part of n.#parts) {
+                        /* c8 ignore start */
+                        if (typeof part === 'string') {
+                            throw new Error('string part in extglob AST??');
+                        }
+                        /* c8 ignore stop */
+                        part.copyIn(pp.#parts[i]);
+                    }
+                }
+                p = pp;
+                pp = p.#parent;
+            }
+        }
+        return this;
+    }
+    push(...parts) {
+        for (const p of parts) {
+            if (p === '')
+                continue;
+            /* c8 ignore start */
+            if (typeof p !== 'string' && !(p instanceof AST && p.#parent === this)) {
+                throw new Error('invalid part: ' + p);
+            }
+            /* c8 ignore stop */
+            this.#parts.push(p);
+        }
+    }
+    toJSON() {
+        const ret = this.type === null
+            ? this.#parts.slice().map(p => (typeof p === 'string' ? p : p.toJSON()))
+            : [this.type, ...this.#parts.map(p => p.toJSON())];
+        if (this.isStart() && !this.type)
+            ret.unshift([]);
+        if (this.isEnd() &&
+            (this === this.#root ||
+                (this.#root.#filledNegs && this.#parent?.type === '!'))) {
+            ret.push({});
+        }
+        return ret;
+    }
+    isStart() {
+        if (this.#root === this)
+            return true;
+        // if (this.type) return !!this.#parent?.isStart()
+        if (!this.#parent?.isStart())
+            return false;
+        if (this.#parentIndex === 0)
+            return true;
+        // if everything AHEAD of this is a negation, then it's still the "start"
+        const p = this.#parent;
+        for (let i = 0; i < this.#parentIndex; i++) {
+            const pp = p.#parts[i];
+            if (!(pp instanceof AST && pp.type === '!')) {
+                return false;
+            }
+        }
+        return true;
+    }
+    isEnd() {
+        if (this.#root === this)
+            return true;
+        if (this.#parent?.type === '!')
+            return true;
+        if (!this.#parent?.isEnd())
+            return false;
+        if (!this.type)
+            return this.#parent?.isEnd();
+        // if not root, it'll always have a parent
+        /* c8 ignore start */
+        const pl = this.#parent ? this.#parent.#parts.length : 0;
+        /* c8 ignore stop */
+        return this.#parentIndex === pl - 1;
+    }
+    copyIn(part) {
+        if (typeof part === 'string')
+            this.push(part);
+        else
+            this.push(part.clone(this));
+    }
+    clone(parent) {
+        const c = new AST(this.type, parent);
+        for (const p of this.#parts) {
+            c.copyIn(p);
+        }
+        return c;
+    }
+    static #parseAST(str, ast, pos, opt) {
+        let escaping = false;
+        let inBrace = false;
+        let braceStart = -1;
+        let braceNeg = false;
+        if (ast.type === null) {
+            // outside of a extglob, append until we find a start
+            let i = pos;
+            let acc = '';
+            while (i < str.length) {
+                const c = str.charAt(i++);
+                // still accumulate escapes at this point, but we do ignore
+                // starts that are escaped
+                if (escaping || c === '\\') {
+                    escaping = !escaping;
+                    acc += c;
+                    continue;
+                }
+                if (inBrace) {
+                    if (i === braceStart + 1) {
+                        if (c === '^' || c === '!') {
+                            braceNeg = true;
+                        }
+                    }
+                    else if (c === ']' && !(i === braceStart + 2 && braceNeg)) {
+                        inBrace = false;
+                    }
+                    acc += c;
+                    continue;
+                }
+                else if (c === '[') {
+                    inBrace = true;
+                    braceStart = i;
+                    braceNeg = false;
+                    acc += c;
+                    continue;
+                }
+                if (!opt.noext && isExtglobType(c) && str.charAt(i) === '(') {
+                    ast.push(acc);
+                    acc = '';
+                    const ext = new AST(c, ast);
+                    i = AST.#parseAST(str, ext, i, opt);
+                    ast.push(ext);
+                    continue;
+                }
+                acc += c;
+            }
+            ast.push(acc);
+            return i;
+        }
+        // some kind of extglob, pos is at the (
+        // find the next | or )
+        let i = pos + 1;
+        let part = new AST(null, ast);
+        const parts = [];
+        let acc = '';
+        while (i < str.length) {
+            const c = str.charAt(i++);
+            // still accumulate escapes at this point, but we do ignore
+            // starts that are escaped
+            if (escaping || c === '\\') {
+                escaping = !escaping;
+                acc += c;
+                continue;
+            }
+            if (inBrace) {
+                if (i === braceStart + 1) {
+                    if (c === '^' || c === '!') {
+                        braceNeg = true;
+                    }
+                }
+                else if (c === ']' && !(i === braceStart + 2 && braceNeg)) {
+                    inBrace = false;
+                }
+                acc += c;
+                continue;
+            }
+            else if (c === '[') {
+                inBrace = true;
+                braceStart = i;
+                braceNeg = false;
+                acc += c;
+                continue;
+            }
+            if (isExtglobType(c) && str.charAt(i) === '(') {
+                part.push(acc);
+                acc = '';
+                const ext = new AST(c, part);
+                part.push(ext);
+                i = AST.#parseAST(str, ext, i, opt);
+                continue;
+            }
+            if (c === '|') {
+                part.push(acc);
+                acc = '';
+                parts.push(part);
+                part = new AST(null, ast);
+                continue;
+            }
+            if (c === ')') {
+                if (acc === '' && ast.#parts.length === 0) {
+                    ast.#emptyExt = true;
+                }
+                part.push(acc);
+                acc = '';
+                ast.push(...parts, part);
+                return i;
+            }
+            acc += c;
+        }
+        // unfinished extglob
+        // if we got here, it was a malformed extglob! not an extglob, but
+        // maybe something else in there.
+        ast.type = null;
+        ast.#hasMagic = undefined;
+        ast.#parts = [str.substring(pos - 1)];
+        return i;
+    }
+    static fromGlob(pattern, options = {}) {
+        const ast = new AST(null, undefined, options);
+        AST.#parseAST(pattern, ast, 0, options);
+        return ast;
+    }
+    // returns the regular expression if there's magic, or the unescaped
+    // string if not.
+    toMMPattern() {
+        // should only be called on root
+        /* c8 ignore start */
+        if (this !== this.#root)
+            return this.#root.toMMPattern();
+        /* c8 ignore stop */
+        const glob = this.toString();
+        const [re, body, hasMagic, uflag] = this.toRegExpSource();
+        // if we're in nocase mode, and not nocaseMagicOnly, then we do
+        // still need a regular expression if we have to case-insensitively
+        // match capital/lowercase characters.
+        const anyMagic = hasMagic ||
+            this.#hasMagic ||
+            (this.#options.nocase &&
+                !this.#options.nocaseMagicOnly &&
+                glob.toUpperCase() !== glob.toLowerCase());
+        if (!anyMagic) {
+            return body;
+        }
+        const flags = (this.#options.nocase ? 'i' : '') + (uflag ? 'u' : '');
+        return Object.assign(new RegExp(`^${re}$`, flags), {
+            _src: re,
+            _glob: glob,
+        });
+    }
+    // returns the string match, the regexp source, whether there's magic
+    // in the regexp (so a regular expression is required) and whether or
+    // not the uflag is needed for the regular expression (for posix classes)
+    // TODO: instead of injecting the start/end at this point, just return
+    // the BODY of the regexp, along with the start/end portions suitable
+    // for binding the start/end in either a joined full-path makeRe context
+    // (where we bind to (^|/), or a standalone matchPart context (where
+    // we bind to ^, and not /).  Otherwise slashes get duped!
+    //
+    // In part-matching mode, the start is:
+    // - if not isStart: nothing
+    // - if traversal possible, but not allowed: ^(?!\.\.?$)
+    // - if dots allowed or not possible: ^
+    // - if dots possible and not allowed: ^(?!\.)
+    // end is:
+    // - if not isEnd(): nothing
+    // - else: $
+    //
+    // In full-path matching mode, we put the slash at the START of the
+    // pattern, so start is:
+    // - if first pattern: same as part-matching mode
+    // - if not isStart(): nothing
+    // - if traversal possible, but not allowed: /(?!\.\.?(?:$|/))
+    // - if dots allowed or not possible: /
+    // - if dots possible and not allowed: /(?!\.)
+    // end is:
+    // - if last pattern, same as part-matching mode
+    // - else nothing
+    //
+    // Always put the (?:$|/) on negated tails, though, because that has to be
+    // there to bind the end of the negated pattern portion, and it's easier to
+    // just stick it in now rather than try to inject it later in the middle of
+    // the pattern.
+    //
+    // We can just always return the same end, and leave it up to the caller
+    // to know whether it's going to be used joined or in parts.
+    // And, if the start is adjusted slightly, can do the same there:
+    // - if not isStart: nothing
+    // - if traversal possible, but not allowed: (?:/|^)(?!\.\.?$)
+    // - if dots allowed or not possible: (?:/|^)
+    // - if dots possible and not allowed: (?:/|^)(?!\.)
+    //
+    // But it's better to have a simpler binding without a conditional, for
+    // performance, so probably better to return both start options.
+    //
+    // Then the caller just ignores the end if it's not the first pattern,
+    // and the start always gets applied.
+    //
+    // But that's always going to be $ if it's the ending pattern, or nothing,
+    // so the caller can just attach $ at the end of the pattern when building.
+    //
+    // So the todo is:
+    // - better detect what kind of start is needed
+    // - return both flavors of starting pattern
+    // - attach $ at the end of the pattern when creating the actual RegExp
+    //
+    // Ah, but wait, no, that all only applies to the root when the first pattern
+    // is not an extglob. If the first pattern IS an extglob, then we need all
+    // that dot prevention biz to live in the extglob portions, because eg
+    // +(*|.x*) can match .xy but not .yx.
+    //
+    // So, return the two flavors if it's #root and the first child is not an
+    // AST, otherwise leave it to the child AST to handle it, and there,
+    // use the (?:^|/) style of start binding.
+    //
+    // Even simplified further:
+    // - Since the start for a join is eg /(?!\.) and the start for a part
+    // is ^(?!\.), we can just prepend (?!\.) to the pattern (either root
+    // or start or whatever) and prepend ^ or / at the Regexp construction.
+    toRegExpSource(allowDot) {
+        const dot = allowDot ?? !!this.#options.dot;
+        if (this.#root === this)
+            this.#fillNegs();
+        if (!this.type) {
+            const noEmpty = this.isStart() && this.isEnd();
+            const src = this.#parts
+                .map(p => {
+                const [re, _, hasMagic, uflag] = typeof p === 'string'
+                    ? AST.#parseGlob(p, this.#hasMagic, noEmpty)
+                    : p.toRegExpSource(allowDot);
+                this.#hasMagic = this.#hasMagic || hasMagic;
+                this.#uflag = this.#uflag || uflag;
+                return re;
+            })
+                .join('');
+            let start = '';
+            if (this.isStart()) {
+                if (typeof this.#parts[0] === 'string') {
+                    // this is the string that will match the start of the pattern,
+                    // so we need to protect against dots and such.
+                    // '.' and '..' cannot match unless the pattern is that exactly,
+                    // even if it starts with . or dot:true is set.
+                    const dotTravAllowed = this.#parts.length === 1 && justDots.has(this.#parts[0]);
+                    if (!dotTravAllowed) {
+                        const aps = addPatternStart;
+                        // check if we have a possibility of matching . or ..,
+                        // and prevent that.
+                        const needNoTrav = 
+                        // dots are allowed, and the pattern starts with [ or .
+                        (dot && aps.has(src.charAt(0))) ||
+                            // the pattern starts with \., and then [ or .
+                            (src.startsWith('\\.') && aps.has(src.charAt(2))) ||
+                            // the pattern starts with \.\., and then [ or .
+                            (src.startsWith('\\.\\.') && aps.has(src.charAt(4)));
+                        // no need to prevent dots if it can't match a dot, or if a
+                        // sub-pattern will be preventing it anyway.
+                        const needNoDot = !dot && !allowDot && aps.has(src.charAt(0));
+                        start = needNoTrav ? startNoTraversal : needNoDot ? startNoDot : '';
+                    }
+                }
+            }
+            // append the "end of path portion" pattern to negation tails
+            let end = '';
+            if (this.isEnd() &&
+                this.#root.#filledNegs &&
+                this.#parent?.type === '!') {
+                end = '(?:$|\\/)';
+            }
+            const final = start + src + end;
+            return [
+                final,
+                unescape(src),
+                (this.#hasMagic = !!this.#hasMagic),
+                this.#uflag,
+            ];
+        }
+        // We need to calculate the body *twice* if it's a repeat pattern
+        // at the start, once in nodot mode, then again in dot mode, so a
+        // pattern like *(?) can match 'x.y'
+        const repeated = this.type === '*' || this.type === '+';
+        // some kind of extglob
+        const start = this.type === '!' ? '(?:(?!(?:' : '(?:';
+        let body = this.#partsToRegExp(dot);
+        if (this.isStart() && this.isEnd() && !body && this.type !== '!') {
+            // invalid extglob, has to at least be *something* present, if it's
+            // the entire path portion.
+            const s = this.toString();
+            this.#parts = [s];
+            this.type = null;
+            this.#hasMagic = undefined;
+            return [s, unescape(this.toString()), false, false];
+        }
+        // XXX abstract out this map method
+        let bodyDotAllowed = !repeated || allowDot || dot || false
+            ? ''
+            : this.#partsToRegExp(true);
+        if (bodyDotAllowed === body) {
+            bodyDotAllowed = '';
+        }
+        if (bodyDotAllowed) {
+            body = `(?:${body})(?:${bodyDotAllowed})*?`;
+        }
+        // an empty !() is exactly equivalent to a starNoEmpty
+        let final = '';
+        if (this.type === '!' && this.#emptyExt) {
+            final = (this.isStart() && !dot ? startNoDot : '') + starNoEmpty;
+        }
+        else {
+            const close = this.type === '!'
+                ? // !() must match something,but !(x) can match ''
+                    '))' +
+                        (this.isStart() && !dot && !allowDot ? startNoDot : '') +
+                        star$1 +
+                        ')'
+                : this.type === '@'
+                    ? ')'
+                    : this.type === '?'
+                        ? ')?'
+                        : this.type === '+' && bodyDotAllowed
+                            ? ')'
+                            : this.type === '*' && bodyDotAllowed
+                                ? `)?`
+                                : `)${this.type}`;
+            final = start + body + close;
+        }
+        return [
+            final,
+            unescape(body),
+            (this.#hasMagic = !!this.#hasMagic),
+            this.#uflag,
+        ];
+    }
+    #partsToRegExp(dot) {
+        return this.#parts
+            .map(p => {
+            // extglob ASTs should only contain parent ASTs
+            /* c8 ignore start */
+            if (typeof p === 'string') {
+                throw new Error('string type in extglob ast??');
+            }
+            /* c8 ignore stop */
+            // can ignore hasMagic, because extglobs are already always magic
+            const [re, _, _hasMagic, uflag] = p.toRegExpSource(dot);
+            this.#uflag = this.#uflag || uflag;
+            return re;
+        })
+            .filter(p => !(this.isStart() && this.isEnd()) || !!p)
+            .join('|');
+    }
+    static #parseGlob(glob, hasMagic, noEmpty = false) {
+        let escaping = false;
+        let re = '';
+        let uflag = false;
+        for (let i = 0; i < glob.length; i++) {
+            const c = glob.charAt(i);
+            if (escaping) {
+                escaping = false;
+                re += (reSpecials.has(c) ? '\\' : '') + c;
+                continue;
+            }
+            if (c === '\\') {
+                if (i === glob.length - 1) {
+                    re += '\\\\';
+                }
+                else {
+                    escaping = true;
+                }
+                continue;
+            }
+            if (c === '[') {
+                const [src, needUflag, consumed, magic] = parseClass(glob, i);
+                if (consumed) {
+                    re += src;
+                    uflag = uflag || needUflag;
+                    i += consumed - 1;
+                    hasMagic = hasMagic || magic;
+                    continue;
+                }
+            }
+            if (c === '*') {
+                if (noEmpty && glob === '*')
+                    re += starNoEmpty;
+                else
+                    re += star$1;
+                hasMagic = true;
+                continue;
+            }
+            if (c === '?') {
+                re += qmark$1;
+                hasMagic = true;
+                continue;
+            }
+            re += regExpEscape$1(c);
+        }
+        return [re, unescape(glob), !!hasMagic, uflag];
+    }
+}
+
+/**
+ * Escape all magic characters in a glob pattern.
+ *
+ * If the {@link windowsPathsNoEscape | GlobOptions.windowsPathsNoEscape}
+ * option is used, then characters are escaped by wrapping in `[]`, because
+ * a magic character wrapped in a character class can only be satisfied by
+ * that exact character.  In this mode, `\` is _not_ escaped, because it is
+ * not interpreted as a magic character, but instead as a path separator.
+ */
+const escape$1 = (s, { windowsPathsNoEscape = false, } = {}) => {
+    // don't need to escape +@! because we escape the parens
+    // that make those magic, and escaping ! as [!] isn't valid,
+    // because [!]] is a valid glob class meaning not ']'.
+    return windowsPathsNoEscape
+        ? s.replace(/[?*()[\]]/g, '[$&]')
+        : s.replace(/[?*()[\]\\]/g, '\\$&');
+};
+
+const minimatch = (p, pattern, options = {}) => {
+    assertValidPattern(pattern);
+    // shortcut: comments match nothing.
+    if (!options.nocomment && pattern.charAt(0) === '#') {
+        return false;
+    }
+    return new Minimatch(pattern, options).match(p);
+};
+// Optimized checking for the most common glob patterns.
+const starDotExtRE = /^\*+([^+@!?\*\[\(]*)$/;
+const starDotExtTest = (ext) => (f) => !f.startsWith('.') && f.endsWith(ext);
+const starDotExtTestDot = (ext) => (f) => f.endsWith(ext);
+const starDotExtTestNocase = (ext) => {
+    ext = ext.toLowerCase();
+    return (f) => !f.startsWith('.') && f.toLowerCase().endsWith(ext);
+};
+const starDotExtTestNocaseDot = (ext) => {
+    ext = ext.toLowerCase();
+    return (f) => f.toLowerCase().endsWith(ext);
+};
+const starDotStarRE = /^\*+\.\*+$/;
+const starDotStarTest = (f) => !f.startsWith('.') && f.includes('.');
+const starDotStarTestDot = (f) => f !== '.' && f !== '..' && f.includes('.');
+const dotStarRE = /^\.\*+$/;
+const dotStarTest = (f) => f !== '.' && f !== '..' && f.startsWith('.');
+const starRE = /^\*+$/;
+const starTest = (f) => f.length !== 0 && !f.startsWith('.');
+const starTestDot = (f) => f.length !== 0 && f !== '.' && f !== '..';
+const qmarksRE = /^\?+([^+@!?\*\[\(]*)?$/;
+const qmarksTestNocase = ([$0, ext = '']) => {
+    const noext = qmarksTestNoExt([$0]);
+    if (!ext)
+        return noext;
+    ext = ext.toLowerCase();
+    return (f) => noext(f) && f.toLowerCase().endsWith(ext);
+};
+const qmarksTestNocaseDot = ([$0, ext = '']) => {
+    const noext = qmarksTestNoExtDot([$0]);
+    if (!ext)
+        return noext;
+    ext = ext.toLowerCase();
+    return (f) => noext(f) && f.toLowerCase().endsWith(ext);
+};
+const qmarksTestDot = ([$0, ext = '']) => {
+    const noext = qmarksTestNoExtDot([$0]);
+    return !ext ? noext : (f) => noext(f) && f.endsWith(ext);
+};
+const qmarksTest = ([$0, ext = '']) => {
+    const noext = qmarksTestNoExt([$0]);
+    return !ext ? noext : (f) => noext(f) && f.endsWith(ext);
+};
+const qmarksTestNoExt = ([$0]) => {
+    const len = $0.length;
+    return (f) => f.length === len && !f.startsWith('.');
+};
+const qmarksTestNoExtDot = ([$0]) => {
+    const len = $0.length;
+    return (f) => f.length === len && f !== '.' && f !== '..';
+};
+/* c8 ignore start */
+const defaultPlatform = (typeof process === 'object' && process
+    ? (typeof process.env === 'object' &&
+        process.env &&
+        process.env.__MINIMATCH_TESTING_PLATFORM__) ||
+        process.platform
+    : 'posix');
+const path = {
+    win32: { sep: '\\' },
+    posix: { sep: '/' },
+};
+/* c8 ignore stop */
+const sep = defaultPlatform === 'win32' ? path.win32.sep : path.posix.sep;
+minimatch.sep = sep;
+const GLOBSTAR = Symbol('globstar **');
+minimatch.GLOBSTAR = GLOBSTAR;
+// any single thing other than /
+// don't need to escape / when using new RegExp()
+const qmark = '[^/]';
+// * => any number of characters
+const star = qmark + '*?';
+// ** when dots are allowed.  Anything goes, except .. and .
+// not (^ or / followed by one or two dots followed by $ or /),
+// followed by anything, any number of times.
+const twoStarDot = '(?:(?!(?:\\/|^)(?:\\.{1,2})($|\\/)).)*?';
+// not a ^ or / followed by a dot,
+// followed by anything, any number of times.
+const twoStarNoDot = '(?:(?!(?:\\/|^)\\.).)*?';
+const filter = (pattern, options = {}) => (p) => minimatch(p, pattern, options);
+minimatch.filter = filter;
+const ext = (a, b = {}) => Object.assign({}, a, b);
+const defaults = (def) => {
+    if (!def || typeof def !== 'object' || !Object.keys(def).length) {
+        return minimatch;
+    }
+    const orig = minimatch;
+    const m = (p, pattern, options = {}) => orig(p, pattern, ext(def, options));
+    return Object.assign(m, {
+        Minimatch: class Minimatch extends orig.Minimatch {
+            constructor(pattern, options = {}) {
+                super(pattern, ext(def, options));
+            }
+            static defaults(options) {
+                return orig.defaults(ext(def, options)).Minimatch;
+            }
+        },
+        AST: class AST extends orig.AST {
+            /* c8 ignore start */
+            constructor(type, parent, options = {}) {
+                super(type, parent, ext(def, options));
+            }
+            /* c8 ignore stop */
+            static fromGlob(pattern, options = {}) {
+                return orig.AST.fromGlob(pattern, ext(def, options));
+            }
+        },
+        unescape: (s, options = {}) => orig.unescape(s, ext(def, options)),
+        escape: (s, options = {}) => orig.escape(s, ext(def, options)),
+        filter: (pattern, options = {}) => orig.filter(pattern, ext(def, options)),
+        defaults: (options) => orig.defaults(ext(def, options)),
+        makeRe: (pattern, options = {}) => orig.makeRe(pattern, ext(def, options)),
+        braceExpand: (pattern, options = {}) => orig.braceExpand(pattern, ext(def, options)),
+        match: (list, pattern, options = {}) => orig.match(list, pattern, ext(def, options)),
+        sep: orig.sep,
+        GLOBSTAR: GLOBSTAR,
+    });
+};
+minimatch.defaults = defaults;
+// Brace expansion:
+// a{b,c}d -> abd acd
+// a{b,}c -> abc ac
+// a{0..3}d -> a0d a1d a2d a3d
+// a{b,c{d,e}f}g -> abg acdfg acefg
+// a{b,c}d{e,f}g -> abdeg acdeg abdeg abdfg
+//
+// Invalid sets are not expanded.
+// a{2..}b -> a{2..}b
+// a{b}c -> a{b}c
+const braceExpand = (pattern, options = {}) => {
+    assertValidPattern(pattern);
+    // Thanks to Yeting Li <https://github.com/yetingli> for
+    // improving this regexp to avoid a ReDOS vulnerability.
+    if (options.nobrace || !/\{(?:(?!\{).)*\}/.test(pattern)) {
+        // shortcut. no need to expand.
+        return [pattern];
+    }
+    return expand(pattern);
+};
+minimatch.braceExpand = braceExpand;
+// parse a component of the expanded set.
+// At this point, no pattern may contain "/" in it
+// so we're going to return a 2d array, where each entry is the full
+// pattern, split on '/', and then turned into a regular expression.
+// A regexp is made at the end which joins each array with an
+// escaped /, and another full one which joins each regexp with |.
+//
+// Following the lead of Bash 4.1, note that "**" only has special meaning
+// when it is the *only* thing in a path portion.  Otherwise, any series
+// of * is equivalent to a single *.  Globstar behavior is enabled by
+// default, and can be disabled by setting options.noglobstar.
+const makeRe = (pattern, options = {}) => new Minimatch(pattern, options).makeRe();
+minimatch.makeRe = makeRe;
+const match = (list, pattern, options = {}) => {
+    const mm = new Minimatch(pattern, options);
+    list = list.filter(f => mm.match(f));
+    if (mm.options.nonull && !list.length) {
+        list.push(pattern);
+    }
+    return list;
+};
+minimatch.match = match;
+// replace stuff like \* with *
+const globMagic = /[?*]|[+@!]\(.*?\)|\[|\]/;
+const regExpEscape = (s) => s.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, '\\$&');
+class Minimatch {
+    options;
+    set;
+    pattern;
+    windowsPathsNoEscape;
+    nonegate;
+    negate;
+    comment;
+    empty;
+    preserveMultipleSlashes;
+    partial;
+    globSet;
+    globParts;
+    nocase;
+    isWindows;
+    platform;
+    windowsNoMagicRoot;
+    regexp;
+    constructor(pattern, options = {}) {
+        assertValidPattern(pattern);
+        options = options || {};
+        this.options = options;
+        this.pattern = pattern;
+        this.platform = options.platform || defaultPlatform;
+        this.isWindows = this.platform === 'win32';
+        this.windowsPathsNoEscape =
+            !!options.windowsPathsNoEscape || options.allowWindowsEscape === false;
+        if (this.windowsPathsNoEscape) {
+            this.pattern = this.pattern.replace(/\\/g, '/');
+        }
+        this.preserveMultipleSlashes = !!options.preserveMultipleSlashes;
+        this.regexp = null;
+        this.negate = false;
+        this.nonegate = !!options.nonegate;
+        this.comment = false;
+        this.empty = false;
+        this.partial = !!options.partial;
+        this.nocase = !!this.options.nocase;
+        this.windowsNoMagicRoot =
+            options.windowsNoMagicRoot !== undefined
+                ? options.windowsNoMagicRoot
+                : !!(this.isWindows && this.nocase);
+        this.globSet = [];
+        this.globParts = [];
+        this.set = [];
+        // make the set of regexps etc.
+        this.make();
+    }
+    hasMagic() {
+        if (this.options.magicalBraces && this.set.length > 1) {
+            return true;
+        }
+        for (const pattern of this.set) {
+            for (const part of pattern) {
+                if (typeof part !== 'string')
+                    return true;
+            }
+        }
+        return false;
+    }
+    debug(..._) { }
+    make() {
+        const pattern = this.pattern;
+        const options = this.options;
+        // empty patterns and comments match nothing.
+        if (!options.nocomment && pattern.charAt(0) === '#') {
+            this.comment = true;
+            return;
+        }
+        if (!pattern) {
+            this.empty = true;
+            return;
+        }
+        // step 1: figure out negation, etc.
+        this.parseNegate();
+        // step 2: expand braces
+        this.globSet = [...new Set(this.braceExpand())];
+        if (options.debug) {
+            this.debug = (...args) => console.error(...args);
+        }
+        this.debug(this.pattern, this.globSet);
+        // step 3: now we have a set, so turn each one into a series of
+        // path-portion matching patterns.
+        // These will be regexps, except in the case of "**", which is
+        // set to the GLOBSTAR object for globstar behavior,
+        // and will not contain any / characters
+        //
+        // First, we preprocess to make the glob pattern sets a bit simpler
+        // and deduped.  There are some perf-killing patterns that can cause
+        // problems with a glob walk, but we can simplify them down a bit.
+        const rawGlobParts = this.globSet.map(s => this.slashSplit(s));
+        this.globParts = this.preprocess(rawGlobParts);
+        this.debug(this.pattern, this.globParts);
+        // glob --> regexps
+        let set = this.globParts.map((s, _, __) => {
+            if (this.isWindows && this.windowsNoMagicRoot) {
+                // check if it's a drive or unc path.
+                const isUNC = s[0] === '' &&
+                    s[1] === '' &&
+                    (s[2] === '?' || !globMagic.test(s[2])) &&
+                    !globMagic.test(s[3]);
+                const isDrive = /^[a-z]:/i.test(s[0]);
+                if (isUNC) {
+                    return [...s.slice(0, 4), ...s.slice(4).map(ss => this.parse(ss))];
+                }
+                else if (isDrive) {
+                    return [s[0], ...s.slice(1).map(ss => this.parse(ss))];
+                }
+            }
+            return s.map(ss => this.parse(ss));
+        });
+        this.debug(this.pattern, set);
+        // filter out everything that didn't compile properly.
+        this.set = set.filter(s => s.indexOf(false) === -1);
+        // do not treat the ? in UNC paths as magic
+        if (this.isWindows) {
+            for (let i = 0; i < this.set.length; i++) {
+                const p = this.set[i];
+                if (p[0] === '' &&
+                    p[1] === '' &&
+                    this.globParts[i][2] === '?' &&
+                    typeof p[3] === 'string' &&
+                    /^[a-z]:$/i.test(p[3])) {
+                    p[2] = '?';
+                }
+            }
+        }
+        this.debug(this.pattern, this.set);
+    }
+    // various transforms to equivalent pattern sets that are
+    // faster to process in a filesystem walk.  The goal is to
+    // eliminate what we can, and push all ** patterns as far
+    // to the right as possible, even if it increases the number
+    // of patterns that we have to process.
+    preprocess(globParts) {
+        // if we're not in globstar mode, then turn all ** into *
+        if (this.options.noglobstar) {
+            for (let i = 0; i < globParts.length; i++) {
+                for (let j = 0; j < globParts[i].length; j++) {
+                    if (globParts[i][j] === '**') {
+                        globParts[i][j] = '*';
+                    }
+                }
+            }
+        }
+        const { optimizationLevel = 1 } = this.options;
+        if (optimizationLevel >= 2) {
+            // aggressive optimization for the purpose of fs walking
+            globParts = this.firstPhasePreProcess(globParts);
+            globParts = this.secondPhasePreProcess(globParts);
+        }
+        else if (optimizationLevel >= 1) {
+            // just basic optimizations to remove some .. parts
+            globParts = this.levelOneOptimize(globParts);
+        }
+        else {
+            globParts = this.adjascentGlobstarOptimize(globParts);
+        }
+        return globParts;
+    }
+    // just get rid of adjascent ** portions
+    adjascentGlobstarOptimize(globParts) {
+        return globParts.map(parts => {
+            let gs = -1;
+            while (-1 !== (gs = parts.indexOf('**', gs + 1))) {
+                let i = gs;
+                while (parts[i + 1] === '**') {
+                    i++;
+                }
+                if (i !== gs) {
+                    parts.splice(gs, i - gs);
+                }
+            }
+            return parts;
+        });
+    }
+    // get rid of adjascent ** and resolve .. portions
+    levelOneOptimize(globParts) {
+        return globParts.map(parts => {
+            parts = parts.reduce((set, part) => {
+                const prev = set[set.length - 1];
+                if (part === '**' && prev === '**') {
+                    return set;
+                }
+                if (part === '..') {
+                    if (prev && prev !== '..' && prev !== '.' && prev !== '**') {
+                        set.pop();
+                        return set;
+                    }
+                }
+                set.push(part);
+                return set;
+            }, []);
+            return parts.length === 0 ? [''] : parts;
+        });
+    }
+    levelTwoFileOptimize(parts) {
+        if (!Array.isArray(parts)) {
+            parts = this.slashSplit(parts);
+        }
+        let didSomething = false;
+        do {
+            didSomething = false;
+            // <pre>/<e>/<rest> -> <pre>/<rest>
+            if (!this.preserveMultipleSlashes) {
+                for (let i = 1; i < parts.length - 1; i++) {
+                    const p = parts[i];
+                    // don't squeeze out UNC patterns
+                    if (i === 1 && p === '' && parts[0] === '')
+                        continue;
+                    if (p === '.' || p === '') {
+                        didSomething = true;
+                        parts.splice(i, 1);
+                        i--;
+                    }
+                }
+                if (parts[0] === '.' &&
+                    parts.length === 2 &&
+                    (parts[1] === '.' || parts[1] === '')) {
+                    didSomething = true;
+                    parts.pop();
+                }
+            }
+            // <pre>/<p>/../<rest> -> <pre>/<rest>
+            let dd = 0;
+            while (-1 !== (dd = parts.indexOf('..', dd + 1))) {
+                const p = parts[dd - 1];
+                if (p && p !== '.' && p !== '..' && p !== '**') {
+                    didSomething = true;
+                    parts.splice(dd - 1, 2);
+                    dd -= 2;
+                }
+            }
+        } while (didSomething);
+        return parts.length === 0 ? [''] : parts;
+    }
+    // First phase: single-pattern processing
+    // <pre> is 1 or more portions
+    // <rest> is 1 or more portions
+    // <p> is any portion other than ., .., '', or **
+    // <e> is . or ''
+    //
+    // **/.. is *brutal* for filesystem walking performance, because
+    // it effectively resets the recursive walk each time it occurs,
+    // and ** cannot be reduced out by a .. pattern part like a regexp
+    // or most strings (other than .., ., and '') can be.
+    //
+    // <pre>/**/../<p>/<p>/<rest> -> {<pre>/../<p>/<p>/<rest>,<pre>/**/<p>/<p>/<rest>}
+    // <pre>/<e>/<rest> -> <pre>/<rest>
+    // <pre>/<p>/../<rest> -> <pre>/<rest>
+    // **/**/<rest> -> **/<rest>
+    //
+    // **/*/<rest> -> */**/<rest> <== not valid because ** doesn't follow
+    // this WOULD be allowed if ** did follow symlinks, or * didn't
+    firstPhasePreProcess(globParts) {
+        let didSomething = false;
+        do {
+            didSomething = false;
+            // <pre>/**/../<p>/<p>/<rest> -> {<pre>/../<p>/<p>/<rest>,<pre>/**/<p>/<p>/<rest>}
+            for (let parts of globParts) {
+                let gs = -1;
+                while (-1 !== (gs = parts.indexOf('**', gs + 1))) {
+                    let gss = gs;
+                    while (parts[gss + 1] === '**') {
+                        // <pre>/**/**/<rest> -> <pre>/**/<rest>
+                        gss++;
+                    }
+                    // eg, if gs is 2 and gss is 4, that means we have 3 **
+                    // parts, and can remove 2 of them.
+                    if (gss > gs) {
+                        parts.splice(gs + 1, gss - gs);
+                    }
+                    let next = parts[gs + 1];
+                    const p = parts[gs + 2];
+                    const p2 = parts[gs + 3];
+                    if (next !== '..')
+                        continue;
+                    if (!p ||
+                        p === '.' ||
+                        p === '..' ||
+                        !p2 ||
+                        p2 === '.' ||
+                        p2 === '..') {
+                        continue;
+                    }
+                    didSomething = true;
+                    // edit parts in place, and push the new one
+                    parts.splice(gs, 1);
+                    const other = parts.slice(0);
+                    other[gs] = '**';
+                    globParts.push(other);
+                    gs--;
+                }
+                // <pre>/<e>/<rest> -> <pre>/<rest>
+                if (!this.preserveMultipleSlashes) {
+                    for (let i = 1; i < parts.length - 1; i++) {
+                        const p = parts[i];
+                        // don't squeeze out UNC patterns
+                        if (i === 1 && p === '' && parts[0] === '')
+                            continue;
+                        if (p === '.' || p === '') {
+                            didSomething = true;
+                            parts.splice(i, 1);
+                            i--;
+                        }
+                    }
+                    if (parts[0] === '.' &&
+                        parts.length === 2 &&
+                        (parts[1] === '.' || parts[1] === '')) {
+                        didSomething = true;
+                        parts.pop();
+                    }
+                }
+                // <pre>/<p>/../<rest> -> <pre>/<rest>
+                let dd = 0;
+                while (-1 !== (dd = parts.indexOf('..', dd + 1))) {
+                    const p = parts[dd - 1];
+                    if (p && p !== '.' && p !== '..' && p !== '**') {
+                        didSomething = true;
+                        const needDot = dd === 1 && parts[dd + 1] === '**';
+                        const splin = needDot ? ['.'] : [];
+                        parts.splice(dd - 1, 2, ...splin);
+                        if (parts.length === 0)
+                            parts.push('');
+                        dd -= 2;
+                    }
+                }
+            }
+        } while (didSomething);
+        return globParts;
+    }
+    // second phase: multi-pattern dedupes
+    // {<pre>/*/<rest>,<pre>/<p>/<rest>} -> <pre>/*/<rest>
+    // {<pre>/<rest>,<pre>/<rest>} -> <pre>/<rest>
+    // {<pre>/**/<rest>,<pre>/<rest>} -> <pre>/**/<rest>
+    //
+    // {<pre>/**/<rest>,<pre>/**/<p>/<rest>} -> <pre>/**/<rest>
+    // ^-- not valid because ** doens't follow symlinks
+    secondPhasePreProcess(globParts) {
+        for (let i = 0; i < globParts.length - 1; i++) {
+            for (let j = i + 1; j < globParts.length; j++) {
+                const matched = this.partsMatch(globParts[i], globParts[j], !this.preserveMultipleSlashes);
+                if (!matched)
+                    continue;
+                globParts[i] = matched;
+                globParts[j] = [];
+            }
+        }
+        return globParts.filter(gs => gs.length);
+    }
+    partsMatch(a, b, emptyGSMatch = false) {
+        let ai = 0;
+        let bi = 0;
+        let result = [];
+        let which = '';
+        while (ai < a.length && bi < b.length) {
+            if (a[ai] === b[bi]) {
+                result.push(which === 'b' ? b[bi] : a[ai]);
+                ai++;
+                bi++;
+            }
+            else if (emptyGSMatch && a[ai] === '**' && b[bi] === a[ai + 1]) {
+                result.push(a[ai]);
+                ai++;
+            }
+            else if (emptyGSMatch && b[bi] === '**' && a[ai] === b[bi + 1]) {
+                result.push(b[bi]);
+                bi++;
+            }
+            else if (a[ai] === '*' &&
+                b[bi] &&
+                (this.options.dot || !b[bi].startsWith('.')) &&
+                b[bi] !== '**') {
+                if (which === 'b')
+                    return false;
+                which = 'a';
+                result.push(a[ai]);
+                ai++;
+                bi++;
+            }
+            else if (b[bi] === '*' &&
+                a[ai] &&
+                (this.options.dot || !a[ai].startsWith('.')) &&
+                a[ai] !== '**') {
+                if (which === 'a')
+                    return false;
+                which = 'b';
+                result.push(b[bi]);
+                ai++;
+                bi++;
+            }
+            else {
+                return false;
+            }
+        }
+        // if we fall out of the loop, it means they two are identical
+        // as long as their lengths match
+        return a.length === b.length && result;
+    }
+    parseNegate() {
+        if (this.nonegate)
+            return;
+        const pattern = this.pattern;
+        let negate = false;
+        let negateOffset = 0;
+        for (let i = 0; i < pattern.length && pattern.charAt(i) === '!'; i++) {
+            negate = !negate;
+            negateOffset++;
+        }
+        if (negateOffset)
+            this.pattern = pattern.slice(negateOffset);
+        this.negate = negate;
+    }
+    // set partial to true to test if, for example,
+    // "/a/b" matches the start of "/*/b/*/d"
+    // Partial means, if you run out of file before you run
+    // out of pattern, then that's fine, as long as all
+    // the parts match.
+    matchOne(file, pattern, partial = false) {
+        const options = this.options;
+        // UNC paths like //?/X:/... can match X:/... and vice versa
+        // Drive letters in absolute drive or unc paths are always compared
+        // case-insensitively.
+        if (this.isWindows) {
+            const fileDrive = typeof file[0] === 'string' && /^[a-z]:$/i.test(file[0]);
+            const fileUNC = !fileDrive &&
+                file[0] === '' &&
+                file[1] === '' &&
+                file[2] === '?' &&
+                /^[a-z]:$/i.test(file[3]);
+            const patternDrive = typeof pattern[0] === 'string' && /^[a-z]:$/i.test(pattern[0]);
+            const patternUNC = !patternDrive &&
+                pattern[0] === '' &&
+                pattern[1] === '' &&
+                pattern[2] === '?' &&
+                typeof pattern[3] === 'string' &&
+                /^[a-z]:$/i.test(pattern[3]);
+            const fdi = fileUNC ? 3 : fileDrive ? 0 : undefined;
+            const pdi = patternUNC ? 3 : patternDrive ? 0 : undefined;
+            if (typeof fdi === 'number' && typeof pdi === 'number') {
+                const [fd, pd] = [file[fdi], pattern[pdi]];
+                if (fd.toLowerCase() === pd.toLowerCase()) {
+                    pattern[pdi] = fd;
+                    if (pdi > fdi) {
+                        pattern = pattern.slice(pdi);
+                    }
+                    else if (fdi > pdi) {
+                        file = file.slice(fdi);
+                    }
+                }
+            }
+        }
+        // resolve and reduce . and .. portions in the file as well.
+        // dont' need to do the second phase, because it's only one string[]
+        const { optimizationLevel = 1 } = this.options;
+        if (optimizationLevel >= 2) {
+            file = this.levelTwoFileOptimize(file);
+        }
+        this.debug('matchOne', this, { file, pattern });
+        this.debug('matchOne', file.length, pattern.length);
+        for (var fi = 0, pi = 0, fl = file.length, pl = pattern.length; fi < fl && pi < pl; fi++, pi++) {
+            this.debug('matchOne loop');
+            var p = pattern[pi];
+            var f = file[fi];
+            this.debug(pattern, p, f);
+            // should be impossible.
+            // some invalid regexp stuff in the set.
+            /* c8 ignore start */
+            if (p === false) {
+                return false;
+            }
+            /* c8 ignore stop */
+            if (p === GLOBSTAR) {
+                this.debug('GLOBSTAR', [pattern, p, f]);
+                // "**"
+                // a/**/b/**/c would match the following:
+                // a/b/x/y/z/c
+                // a/x/y/z/b/c
+                // a/b/x/b/x/c
+                // a/b/c
+                // To do this, take the rest of the pattern after
+                // the **, and see if it would match the file remainder.
+                // If so, return success.
+                // If not, the ** "swallows" a segment, and try again.
+                // This is recursively awful.
+                //
+                // a/**/b/**/c matching a/b/x/y/z/c
+                // - a matches a
+                // - doublestar
+                //   - matchOne(b/x/y/z/c, b/**/c)
+                //     - b matches b
+                //     - doublestar
+                //       - matchOne(x/y/z/c, c) -> no
+                //       - matchOne(y/z/c, c) -> no
+                //       - matchOne(z/c, c) -> no
+                //       - matchOne(c, c) yes, hit
+                var fr = fi;
+                var pr = pi + 1;
+                if (pr === pl) {
+                    this.debug('** at the end');
+                    // a ** at the end will just swallow the rest.
+                    // We have found a match.
+                    // however, it will not swallow /.x, unless
+                    // options.dot is set.
+                    // . and .. are *never* matched by **, for explosively
+                    // exponential reasons.
+                    for (; fi < fl; fi++) {
+                        if (file[fi] === '.' ||
+                            file[fi] === '..' ||
+                            (!options.dot && file[fi].charAt(0) === '.'))
+                            return false;
+                    }
+                    return true;
+                }
+                // ok, let's see if we can swallow whatever we can.
+                while (fr < fl) {
+                    var swallowee = file[fr];
+                    this.debug('\nglobstar while', file, fr, pattern, pr, swallowee);
+                    // XXX remove this slice.  Just pass the start index.
+                    if (this.matchOne(file.slice(fr), pattern.slice(pr), partial)) {
+                        this.debug('globstar found match!', fr, fl, swallowee);
+                        // found a match.
+                        return true;
+                    }
+                    else {
+                        // can't swallow "." or ".." ever.
+                        // can only swallow ".foo" when explicitly asked.
+                        if (swallowee === '.' ||
+                            swallowee === '..' ||
+                            (!options.dot && swallowee.charAt(0) === '.')) {
+                            this.debug('dot detected!', file, fr, pattern, pr);
+                            break;
+                        }
+                        // ** swallows a segment, and continue.
+                        this.debug('globstar swallow a segment, and continue');
+                        fr++;
+                    }
+                }
+                // no match was found.
+                // However, in partial mode, we can't say this is necessarily over.
+                /* c8 ignore start */
+                if (partial) {
+                    // ran out of file
+                    this.debug('\n>>> no match, partial?', file, fr, pattern, pr);
+                    if (fr === fl) {
+                        return true;
+                    }
+                }
+                /* c8 ignore stop */
+                return false;
+            }
+            // something other than **
+            // non-magic patterns just have to match exactly
+            // patterns with magic have been turned into regexps.
+            let hit;
+            if (typeof p === 'string') {
+                hit = f === p;
+                this.debug('string match', p, f, hit);
+            }
+            else {
+                hit = p.test(f);
+                this.debug('pattern match', p, f, hit);
+            }
+            if (!hit)
+                return false;
+        }
+        // Note: ending in / means that we'll get a final ""
+        // at the end of the pattern.  This can only match a
+        // corresponding "" at the end of the file.
+        // If the file ends in /, then it can only match a
+        // a pattern that ends in /, unless the pattern just
+        // doesn't have any more for it. But, a/b/ should *not*
+        // match "a/b/*", even though "" matches against the
+        // [^/]*? pattern, except in partial mode, where it might
+        // simply not be reached yet.
+        // However, a/b/ should still satisfy a/*
+        // now either we fell off the end of the pattern, or we're done.
+        if (fi === fl && pi === pl) {
+            // ran out of pattern and filename at the same time.
+            // an exact hit!
+            return true;
+        }
+        else if (fi === fl) {
+            // ran out of file, but still had pattern left.
+            // this is ok if we're doing the match as part of
+            // a glob fs traversal.
+            return partial;
+        }
+        else if (pi === pl) {
+            // ran out of pattern, still have file left.
+            // this is only acceptable if we're on the very last
+            // empty segment of a file with a trailing slash.
+            // a/* should match a/b/
+            return fi === fl - 1 && file[fi] === '';
+            /* c8 ignore start */
+        }
+        else {
+            // should be unreachable.
+            throw new Error('wtf?');
+        }
+        /* c8 ignore stop */
+    }
+    braceExpand() {
+        return braceExpand(this.pattern, this.options);
+    }
+    parse(pattern) {
+        assertValidPattern(pattern);
+        const options = this.options;
+        // shortcuts
+        if (pattern === '**')
+            return GLOBSTAR;
+        if (pattern === '')
+            return '';
+        // far and away, the most common glob pattern parts are
+        // *, *.*, and *.<ext>  Add a fast check method for those.
+        let m;
+        let fastTest = null;
+        if ((m = pattern.match(starRE))) {
+            fastTest = options.dot ? starTestDot : starTest;
+        }
+        else if ((m = pattern.match(starDotExtRE))) {
+            fastTest = (options.nocase
+                ? options.dot
+                    ? starDotExtTestNocaseDot
+                    : starDotExtTestNocase
+                : options.dot
+                    ? starDotExtTestDot
+                    : starDotExtTest)(m[1]);
+        }
+        else if ((m = pattern.match(qmarksRE))) {
+            fastTest = (options.nocase
+                ? options.dot
+                    ? qmarksTestNocaseDot
+                    : qmarksTestNocase
+                : options.dot
+                    ? qmarksTestDot
+                    : qmarksTest)(m);
+        }
+        else if ((m = pattern.match(starDotStarRE))) {
+            fastTest = options.dot ? starDotStarTestDot : starDotStarTest;
+        }
+        else if ((m = pattern.match(dotStarRE))) {
+            fastTest = dotStarTest;
+        }
+        const re = AST.fromGlob(pattern, this.options).toMMPattern();
+        return fastTest ? Object.assign(re, { test: fastTest }) : re;
+    }
+    makeRe() {
+        if (this.regexp || this.regexp === false)
+            return this.regexp;
+        // at this point, this.set is a 2d array of partial
+        // pattern strings, or "**".
+        //
+        // It's better to use .match().  This function shouldn't
+        // be used, really, but it's pretty convenient sometimes,
+        // when you just want to work with a regex.
+        const set = this.set;
+        if (!set.length) {
+            this.regexp = false;
+            return this.regexp;
+        }
+        const options = this.options;
+        const twoStar = options.noglobstar
+            ? star
+            : options.dot
+                ? twoStarDot
+                : twoStarNoDot;
+        const flags = new Set(options.nocase ? ['i'] : []);
+        // regexpify non-globstar patterns
+        // if ** is only item, then we just do one twoStar
+        // if ** is first, and there are more, prepend (\/|twoStar\/)? to next
+        // if ** is last, append (\/twoStar|) to previous
+        // if ** is in the middle, append (\/|\/twoStar\/) to previous
+        // then filter out GLOBSTAR symbols
+        let re = set
+            .map(pattern => {
+            const pp = pattern.map(p => {
+                if (p instanceof RegExp) {
+                    for (const f of p.flags.split(''))
+                        flags.add(f);
+                }
+                return typeof p === 'string'
+                    ? regExpEscape(p)
+                    : p === GLOBSTAR
+                        ? GLOBSTAR
+                        : p._src;
+            });
+            pp.forEach((p, i) => {
+                const next = pp[i + 1];
+                const prev = pp[i - 1];
+                if (p !== GLOBSTAR || prev === GLOBSTAR) {
+                    return;
+                }
+                if (prev === undefined) {
+                    if (next !== undefined && next !== GLOBSTAR) {
+                        pp[i + 1] = '(?:\\/|' + twoStar + '\\/)?' + next;
+                    }
+                    else {
+                        pp[i] = twoStar;
+                    }
+                }
+                else if (next === undefined) {
+                    pp[i - 1] = prev + '(?:\\/|' + twoStar + ')?';
+                }
+                else if (next !== GLOBSTAR) {
+                    pp[i - 1] = prev + '(?:\\/|\\/' + twoStar + '\\/)' + next;
+                    pp[i + 1] = GLOBSTAR;
+                }
+            });
+            return pp.filter(p => p !== GLOBSTAR).join('/');
+        })
+            .join('|');
+        // need to wrap in parens if we had more than one thing with |,
+        // otherwise only the first will be anchored to ^ and the last to $
+        const [open, close] = set.length > 1 ? ['(?:', ')'] : ['', ''];
+        // must match entire pattern
+        // ending in a * or ** will make it less strict.
+        re = '^' + open + re + close + '$';
+        // can match anything, as long as it's not this.
+        if (this.negate)
+            re = '^(?!' + re + ').+$';
+        try {
+            this.regexp = new RegExp(re, [...flags].join(''));
+            /* c8 ignore start */
+        }
+        catch (ex) {
+            // should be impossible
+            this.regexp = false;
+        }
+        /* c8 ignore stop */
+        return this.regexp;
+    }
+    slashSplit(p) {
+        // if p starts with // on windows, we preserve that
+        // so that UNC paths aren't broken.  Otherwise, any number of
+        // / characters are coalesced into one, unless
+        // preserveMultipleSlashes is set to true.
+        if (this.preserveMultipleSlashes) {
+            return p.split('/');
+        }
+        else if (this.isWindows && /^\/\/[^\/]+/.test(p)) {
+            // add an extra '' for the one we lose
+            return ['', ...p.split(/\/+/)];
+        }
+        else {
+            return p.split(/\/+/);
+        }
+    }
+    match(f, partial = this.partial) {
+        this.debug('match', f, this.pattern);
+        // short-circuit in the case of busted things.
+        // comments, etc.
+        if (this.comment) {
+            return false;
+        }
+        if (this.empty) {
+            return f === '';
+        }
+        if (f === '/' && partial) {
+            return true;
+        }
+        const options = this.options;
+        // windows: need to use /, not \
+        if (this.isWindows) {
+            f = f.split('\\').join('/');
+        }
+        // treat the test path as a set of pathparts.
+        const ff = this.slashSplit(f);
+        this.debug(this.pattern, 'split', ff);
+        // just ONE of the pattern sets in this.set needs to match
+        // in order for it to be valid.  If negating, then just one
+        // match means that we have failed.
+        // Either way, return on the first hit.
+        const set = this.set;
+        this.debug(this.pattern, 'set', set);
+        // Find the basename of the path by looking for the last non-empty segment
+        let filename = ff[ff.length - 1];
+        if (!filename) {
+            for (let i = ff.length - 2; !filename && i >= 0; i--) {
+                filename = ff[i];
+            }
+        }
+        for (let i = 0; i < set.length; i++) {
+            const pattern = set[i];
+            let file = ff;
+            if (options.matchBase && pattern.length === 1) {
+                file = [filename];
+            }
+            const hit = this.matchOne(file, pattern, partial);
+            if (hit) {
+                if (options.flipNegate) {
+                    return true;
+                }
+                return !this.negate;
+            }
+        }
+        // didn't get any hits.  this is success if it's a negative
+        // pattern, failure otherwise.
+        if (options.flipNegate) {
+            return false;
+        }
+        return this.negate;
+    }
+    static defaults(def) {
+        return minimatch.defaults(def).Minimatch;
+    }
+}
+/* c8 ignore stop */
+minimatch.AST = AST;
+minimatch.Minimatch = Minimatch;
+minimatch.escape = escape$1;
+minimatch.unescape = unescape;
+
+const matchPatterns = (patterns, path) => {
+    return patterns.some((pattern) => {
+        try {
+            return minimatch(path, pattern.startsWith('/')
+                ? '**' + pattern
+                : pattern.startsWith('**')
+                    ? pattern
+                    : '**/' + pattern);
+        }
+        catch {
+            // if the pattern is not a valid glob pattern, try to match it as a regular expression
+            try {
+                return new RegExp(pattern).test(path);
+            }
+            catch (e) {
+                failWithOutput(`Invalid pattern: ${pattern} with error ${e}`);
+                return false;
+            }
+        }
+    });
+};
+const filterFile = (file) => {
+    const ignore_patterns = (process.env.IGNORE_PATTERNS || '')
+        .split(',')
+        .filter((v) => Boolean(v.trim()));
+    const url = new URL(file.contents_url);
+    // if ignorePatterns is not empty, ignore files that match the pattern
+    if (ignore_patterns) {
+        return !matchPatterns(ignore_patterns, url.pathname);
+    }
+    return true;
+};
+
 class AIReviewer {
-    model;
-    octokit;
     repo;
     pull_request;
+    trigger;
+    octokit;
+    chat;
     constructor() {
-        this.model = process.env.MODEL || 'gpt-4o-mini';
-        if (!process.env.GITHUB_TOKEN) {
-            failWithOutput('GITHUB_TOKEN is not set.');
-        }
-        this.octokit = new Octokit({ auth: process.env.GITHUB_TOKEN });
         this.repo = githubExports.context.repo;
         if (!githubExports.context.payload.pull_request) {
             failWithOutput('This action only works on pull requests.');
             throw new Error('This action only works on pull requests.');
         }
         this.pull_request = githubExports.context.payload.pull_request;
+        if (!process.env.GITHUB_TOKEN) {
+            failWithOutput('GITHUB_TOKEN is not set.');
+        }
+        this.trigger = githubExports.context.payload.action;
+        this.octokit = new Octokit({ auth: process.env.GITHUB_TOKEN });
+        this.chat = new Chat();
     }
     async main() {
-        // setup chat
-        const chat = new Chat(this.model);
         // get the diff of the pull request
-        const data = await this.octokit.repos.compareCommits({
+        const { data: { files, commits } } = await this.octokit.repos.compareCommits({
             owner: this.repo.owner,
             repo: this.repo.repo,
             base: this.pull_request.base.sha,
             head: this.pull_request.head.sha
         });
-        const { files: changed_files, commits } = data.data;
-        // review diff
+        let changed_files = files;
+        if (this.trigger === 'synchronize' && commits.length >= 2) {
+            const { data: { files } } = await this.octokit.repos.compareCommits({
+                owner: this.repo.owner,
+                repo: this.repo.repo,
+                base: commits[commits.length - 2].sha,
+                head: commits[commits.length - 1].sha
+            });
+            changed_files = files;
+        }
+        // filter files
+        changed_files = changed_files?.filter(filterFile);
         if (changed_files) {
             console.log(`Start reviewing ${changed_files.length} files`);
             // create AI reviews
@@ -40255,7 +42349,7 @@ class AIReviewer {
                 }
                 try {
                     console.log(`Reviewing ${filename}`);
-                    const res = await chat.reviewPatch(patch);
+                    const res = await this.chat.reviewPatch(patch);
                     console.log(`Review for ${filename}:`, res);
                     if (res && !res.includes('LGTM')) {
                         // skip LGTM reviews
@@ -40279,7 +42373,7 @@ class AIReviewer {
                     repo: this.repo.repo,
                     pull_number: this.pull_request.number,
                     commit_id: commits[commits.length - 1].sha,
-                    body: `Review from ${this.model}: ${reviews.length} issues found.`,
+                    body: `Review from ${this.chat.model}: ${reviews.length} issues found.`,
                     event: 'COMMENT',
                     comments: reviews
                 });
@@ -40291,7 +42385,7 @@ class AIReviewer {
                     repo: this.repo.repo,
                     pull_number: this.pull_request.number,
                     commit_id: commits[commits.length - 1].sha,
-                    body: `Review from ${this.model}: LGTM!`,
+                    body: `Review from ${this.chat.model}: LGTM!`,
                     event: 'COMMENT'
                 });
             }

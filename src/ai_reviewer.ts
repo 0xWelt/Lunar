@@ -1,93 +1,59 @@
-import { OpenAI } from 'openai'
 import * as core from '@actions/core'
 import * as github from '@actions/github'
 import { Octokit } from '@octokit/rest'
-import { createReviewPrompt } from './prompts.js'
-
-const failWithOutput = (message: string) => {
-  console.error(message)
-  core.setFailed(message)
-  throw new Error(message)
-}
-export class Chat {
-  private language: string
-  private openai: OpenAI
-  private model: string
-
-  constructor(model: string) {
-    this.language = process.env.LANGUAGE || 'Chinese'
-    const supported_languages = ['Chinese', 'English']
-    if (!supported_languages.includes(this.language)) {
-      failWithOutput(`Language must be one of ${supported_languages}`)
-    }
-
-    if (!process.env.OPENAI_API_KEY) {
-      failWithOutput('OPENAI_API_KEY is not set')
-    }
-    this.openai = new OpenAI({
-      apiKey: process.env.OPENAI_API_KEY,
-      baseURL: process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1'
-    })
-
-    this.model = model
-  }
-
-  public reviewPatch = async (patch: string) => {
-    const res = await this.openai.chat.completions.create({
-      messages: [
-        {
-          role: 'user',
-          content: createReviewPrompt(this.language, patch)
-        }
-      ],
-      model: this.model,
-      temperature: process.env.TEMPERATURE ? +process.env.TEMPERATURE : 1.0,
-      max_tokens: process.env.MAX_TOKENS ? +process.env.MAX_TOKENS : 4096
-    })
-
-    if (res.choices) {
-      return res.choices[0].message.content
-    }
-    failWithOutput('No response from OpenAI')
-  }
-}
+import { failWithOutput } from './utils.js'
+import { Chat } from './chat.js'
+import { filterFile } from './file_filter.js'
 
 export class AIReviewer {
-  private model: string
-
-  private octokit
   private repo
   private pull_request
+  private trigger
+  private octokit: Octokit
+  private chat: Chat
 
   constructor() {
-    this.model = process.env.MODEL || 'gpt-4o-mini'
-
-    if (!process.env.GITHUB_TOKEN) {
-      failWithOutput('GITHUB_TOKEN is not set.')
-    }
-    this.octokit = new Octokit({ auth: process.env.GITHUB_TOKEN })
     this.repo = github.context.repo
     if (!github.context.payload.pull_request) {
       failWithOutput('This action only works on pull requests.')
       throw new Error('This action only works on pull requests.')
     }
     this.pull_request = github.context.payload.pull_request
+    if (!process.env.GITHUB_TOKEN) {
+      failWithOutput('GITHUB_TOKEN is not set.')
+    }
+    this.trigger = github.context.payload.action
+
+    this.octokit = new Octokit({ auth: process.env.GITHUB_TOKEN })
+    this.chat = new Chat()
   }
 
   async main() {
-    // setup chat
-    const chat = new Chat(this.model)
-
     // get the diff of the pull request
-    const data = await this.octokit.repos.compareCommits({
+    const {
+      data: { files, commits }
+    } = await this.octokit.repos.compareCommits({
       owner: this.repo.owner,
       repo: this.repo.repo,
       base: this.pull_request.base.sha,
       head: this.pull_request.head.sha
     })
-    const { files: changed_files, commits } = data.data
+    let changed_files = files
+    if (this.trigger === 'synchronize' && commits.length >= 2) {
+      const {
+        data: { files }
+      } = await this.octokit.repos.compareCommits({
+        owner: this.repo.owner,
+        repo: this.repo.repo,
+        base: commits[commits.length - 2].sha,
+        head: commits[commits.length - 1].sha
+      })
+      changed_files = files
+    }
 
-    // review diff
+    // filter files
+    changed_files = changed_files?.filter(filterFile)
+
     if (changed_files) {
       console.log(`Start reviewing ${changed_files.length} files`)
 
@@ -106,7 +72,7 @@ export class AIReviewer {
 
         try {
           console.log(`Reviewing ${filename}`)
-          const res = await chat.reviewPatch(patch)
+          const res = await this.chat.reviewPatch(patch)
           console.log(`Review for ${filename}:`, res)
           if (res && !res.includes('LGTM')) {
             // skip LGTM reviews
@@ -130,7 +96,7 @@ export class AIReviewer {
           repo: this.repo.repo,
           pull_number: this.pull_request.number,
           commit_id: commits[commits.length - 1].sha,
-          body: `Review from ${this.model}: ${reviews.length} issues found.`,
+          body: `Review from ${this.chat.model}: ${reviews.length} issues found.`,
           event: 'COMMENT',
           comments: reviews
         })
@@ -141,7 +107,7 @@ export class AIReviewer {
           repo: this.repo.repo,
           pull_number: this.pull_request.number,
           commit_id: commits[commits.length - 1].sha,
-          body: `Review from ${this.model}: LGTM!`,
+          body: `Review from ${this.chat.model}: LGTM!`,
           event: 'COMMENT'
         })
       }
