@@ -41,7 +41,7 @@
     "@actions/github": "^6.0.0",
     "@octokit/rest": "^21.1.0",
     "minimatch": "^10.0.1",
-    "openai": "^4.80.1"
+    "openai": "^4.82.0"
   },
   "devDependencies": {
     "@eslint/compat": "^1.2.6",
